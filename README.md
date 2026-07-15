@@ -9,7 +9,7 @@
 <p>Real-time earthquake data dashboard for desktop, mobile, and OBS.</p>
 
 <p>
-  <a href="https://github.com/NJyutong/China-Earthquake-Warning/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-3b82f6" alt="MIT License"></a>
+  <a href="[https://github.com/NJyutong/Earthquake-Live-Monitoring-System/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-3b82f6" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/release-r1-10b981" alt="Release r1">
   <img src="https://img.shields.io/badge/runtime-Node.js%2018%2B-339933" alt="Node.js 18+">
   <img src="https://img.shields.io/badge/views-desktop%20%7C%20mobile%20%7C%20OBS-7c3aed" alt="Desktop, mobile, and OBS views">
