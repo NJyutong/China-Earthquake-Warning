@@ -77,9 +77,6 @@
     '设置菜单': 'Settings menu',
     '关闭': 'Close',
     '运行控制': 'Runtime controls',
-    'OBS 输出': 'OBS output',
-    'OBS 输出未开启': 'OBS output is disabled',
-    '请先在设置页面打开“OBS 输出”开关。': 'Enable OBS output in Settings first.',
     '后台推送': 'Background push',
     '后台推送未开启': 'Background push is disabled',
     '语音播报': 'Voice alerts',
@@ -249,8 +246,6 @@
     '请注意周围环境，远离易坠落物，保持通讯畅通。': 'Be aware of your surroundings, avoid falling objects, and keep communications available.',
     '本地影响较弱，继续保持监控。': 'Local impact is low. Continue monitoring.',
     '继续监控当前区域地震信息。': 'Continue monitoring earthquake information for this area.',
-    'OBS 输出已开启': 'OBS output is enabled',
-    'OBS 默认关闭': 'OBS output is disabled by default',
     '后台推送仅支持 HTTPS': 'Background push requires HTTPS',
     '当前浏览器不支持后台推送': 'This browser does not support background push',
     '后台系统推送已开启': 'Background system push is enabled',
@@ -280,9 +275,21 @@
     '本机通知测试': 'System notification test',
     '后台推送测试': 'Background push test',
     '当前没有可发送的地震信息。': 'There is no earthquake information to send.',
-    '服务器已向当前浏览器订阅发送所选地震信息，请查看系统通知。': 'The server sent the selected earthquake to this browser subscription. Check the system notification.',
-    '服务器已向当前手机浏览器订阅发送所选地震信息，请查看系统通知。': 'The server sent the selected earthquake to this mobile browser subscription. Check the system notification.',
-    '服务器已完成后台推送测试，请查看电脑系统通知。': 'The server completed the background-push test. Check the system notification.',
+    '当前设备已确认收到并创建所选地震的系统通知。': 'This device confirmed receipt and created the system notification for the selected earthquake.',
+    '当前设备已确认收到并创建新的测试系统通知。': 'This device confirmed receipt and created the new test system notification.',
+    '当前设备已确认收到并显示通知。': 'This device confirmed receipt and created the notification.',
+    '当前设备已确认收到通知，正在等待推送服务完成响应。': 'This device confirmed receipt and is waiting for the push service response.',
+    '推送已到达浏览器，Service Worker 已确认创建通知对象。操作系统是否弹出横幅取决于系统通知设置。': 'The push reached the browser and the Service Worker confirmed that it created a notification object. Whether the operating system shows a banner depends on system notification settings.',
+    '浏览器已创建通知对象，正在等待推送服务完成响应。': 'The browser created the notification object and is waiting for the push service response.',
+    '推送服务已完成发送，但浏览器未返回通知对象校验结果。请打开设备通知中心确认。': 'The push service completed delivery, but the browser did not return notification-object verification. Open the device notification center to confirm.',
+    '推送已到达 Edge，Service Worker 已确认创建独立的系统通知。若未看到横幅，请按 Win+N 检查通知中心，并在 Windows“设置 > 系统 > 通知 > Microsoft Edge”中开启通知横幅和声音，同时关闭“请勿打扰”。': 'The push reached Edge and the Service Worker confirmed creation of a unique system notification. If no banner appears, press Win+N to check Notification Center, enable notification banners and sound under Windows Settings > System > Notifications > Microsoft Edge, and turn off Do not disturb.',
+    '推送已到达浏览器，Service Worker 已确认创建系统通知。若未看到横幅，请检查设备的应用通知、通知中心和勿扰模式。': 'The push reached the browser and the Service Worker confirmed creation of a system notification. If no banner appears, check app notifications, Notification Center, and Do Not Disturb on the device.',
+    '推送已到达手机并创建系统通知，网页已请求高紧急度、声音与振动。若通知只停留在状态栏，请在系统通知设置中把当前浏览器的网站通知渠道设为“紧急”或允许“在屏幕上弹出”，并关闭勿扰和省电限制。': 'The push reached the phone and created a system notification with high urgency, sound, and vibration requested. If it only appears in the status bar, set this browser’s website-notification channel to Urgent or allow pop-up display, then disable Do Not Disturb and battery restrictions.',
+    '推送仍由旧版 Edge 通道接收。请强制刷新页面一次，网页会自动迁移到独立桌面推送通道，然后重新测试。': 'The push is still using the legacy Edge channel. Force-refresh the page once so it can migrate to the dedicated desktop push channel, then test again.',
+    '推送已到达 Edge 的独立桌面通道，Service Worker 已确认创建系统通知。若仍未看到横幅，请按 Win+N 检查通知中心，并确认 Windows 的 Microsoft Edge 通知横幅、声音和“请勿打扰”设置。': 'The push reached Edge through the dedicated desktop channel, and the Service Worker confirmed creation of a system notification. If no banner appears, press Win+N and verify Microsoft Edge banners, sound, and Do Not Disturb in Windows notification settings.',
+    '推送服务未接受该测试消息，设备回执不能覆盖失败结果': 'The push service did not accept this test message, so a device acknowledgement cannot override the failed result.',
+    '浏览器推送服务已接受消息，正在等待当前设备确认。': 'The browser push service accepted the message and is waiting for this device to confirm receipt.',
+    '推送服务已接受消息，但当前设备未确认显示通知。请检查浏览器后台运行权限、系统通知设置和专注模式后重试。': 'The push service accepted the message, but this device did not confirm notification creation. Check browser background permission, system notification settings, and focus mode, then try again.',
     '本机通知仅能在 HTTPS 页面中测试。': 'System notifications can only be tested on an HTTPS page.',
     '当前浏览器不支持系统通知或 Service Worker。': 'This browser does not support system notifications or Service Worker.',
     '浏览器没有授予通知权限，请在网站权限中允许通知后重试。': 'Notification permission was not granted. Allow notifications in the site permissions and try again.',
@@ -346,7 +353,7 @@
     '显示震级、预计到达、烈度、发震时间和接收时间。': 'Shows magnitude, estimated arrivals, intensity, origin time, and received time.',
     '显示按时间排序的历史和实时事件。': 'Shows historical and live events ordered by time.',
     '设置': 'Settings',
-    '打开地图源、区域筛选、系统推送、OBS 和调试设置。': 'Opens map source, area filtering, system push, OBS, and debug settings.',
+    '打开地图源、区域筛选、系统推送和调试设置。': 'Opens map source, area filtering, system push, and debug settings.',
     '当前定位': 'Current location',
     '显示用于计算地震波到达时间和本地烈度的所在市区。': 'Shows the location used to estimate seismic-wave arrival times and local intensity.',
     '最新地震': 'Latest earthquake',
@@ -584,7 +591,7 @@
   function translateTaiwanLocation(value) {
     const normalized = value.replace(/臺/g, '台').replace(/蓮/g, '莲').replace(/縣/g, '县').replace(/鄉/g, '乡').replace(/豐/g, '丰').replace(/於/g, '于');
     const directions = Object.keys(directionNames).sort((left, right) => right.length - left.length).join('|');
-    const match = normalized.match(new RegExp(`^(.+?)(${directions})\\s*([\\d.]+)\\s*公里\\s*\\(位于(.+?)\\)$`));
+    const match = normalized.match(new RegExp(`^(.+?)(${directions})\\s*([\\d.]+)\\s*公里\\s*[（(]位于(.+?)[）)]$`));
     if (!match) return '';
     return `${match[3]} km ${directionNames[match[2]]} of ${translatePlaceName(match[1])} (${translatePlaceName(match[4])})`;
   }
@@ -653,9 +660,10 @@
       [/^(.+)授权失败（HTTP\s*(\d+)）$/, (_match, provider, status) => `${translate(provider)} authorization failed (HTTP ${status})`],
       [/^服务器无法直连 (.+?)（(.+?):443）。这是服务器出站网络问题，不是浏览器通知权限；请放行该域名，或配置 PUSH_PROXY_URL \/ Cloudflare 推送中继。$/, (_match, provider, host) => `The server cannot connect directly to ${provider} (${host}:443). This is an outbound server network issue, not a browser permission issue. Allow the host or configure PUSH_PROXY_URL / the Cloudflare push relay.`],
       [/^服务器通过 PUSH_PROXY_URL 仍无法连接 (.+?)，请检查代理出站规则及 (.+?):443。$/, (_match, provider, host) => `The server still cannot reach ${provider} through PUSH_PROXY_URL. Check the proxy outbound rules for ${host}:443.`],
-      [/^服务器无法连接 Cloudflare 推送中继，请检查 PUSH_RELAY_URL、Worker 路由和密钥配置。目标推送服务为 (.+?)。$/, (_match, provider) => `The server cannot reach the Cloudflare push relay. Check PUSH_RELAY_URL, the Worker route, and its secret. Target push service: ${provider}.`],
-      [/^Cloudflare 推送中继无法连接 (.+?)（(.+?):443），请检查 Worker 出站状态。$/, (_match, provider, host) => `The Cloudflare push relay cannot reach ${provider} (${host}:443). Check Worker outbound connectivity.`],
-      [/^Cloudflare 推送中继返回异常(?:（HTTP (\d+)）)?，请检查 Worker 路由、WAF 和服务日志。$/, (_match, status) => `The Cloudflare push relay returned an error${status ? ` (HTTP ${status})` : ''}. Check the Worker route, WAF, and service logs.`],
+      [/^服务器无法连接已配置的 Cloudflare 推送中继（(.+?)），请检查运行中服务的 PUSH_RELAY_URL、DNS 和 Worker 路由。目标推送服务为 (.+?)。$/, (_match, host, provider) => `The server cannot reach its configured Cloudflare push relay (${host}). Check the running service's PUSH_RELAY_URL, DNS, and Worker route. Target push service: ${provider}.`],
+      [/^Cloudflare 推送中继拒绝了请求，请确认 Worker 与服务器使用相同的 PUSH_RELAY_SECRET。(?: 诊断编号：([0-9a-f-]+)。)?$/i, (_match, diagnosticId) => `The Cloudflare push relay rejected the request. Confirm that the Worker and server use the same PUSH_RELAY_SECRET.${diagnosticId ? ` Diagnostic ID: ${diagnosticId}.` : ''}`],
+      [/^Cloudflare 推送中继无法连接 (.+?)（(.+?):443），请检查 Worker 出站状态。(?: 诊断编号：([0-9a-f-]+)。)?$/i, (_match, provider, host, diagnosticId) => `The Cloudflare push relay cannot reach ${provider} (${host}:443). Check Worker outbound connectivity.${diagnosticId ? ` Diagnostic ID: ${diagnosticId}.` : ''}`],
+      [/^Cloudflare 推送中继返回异常(?:（HTTP (\d+)）)?，请检查 Worker 路由、WAF 和服务日志。(?: 诊断编号：([0-9a-f-]+)。)?$/i, (_match, status, diagnosticId) => `The Cloudflare push relay returned an error${status ? ` (HTTP ${status})` : ''}. Check the Worker route, WAF, and service logs.${diagnosticId ? ` Diagnostic ID: ${diagnosticId}.` : ''}`],
       [/^PUSH_RELAY_URL 必须是公网 HTTPS 地址，PUSH_RELAY_SECRET 必须为 32 至 256 位随机字符串$/, () => 'PUSH_RELAY_URL must be a public HTTPS URL and PUSH_RELAY_SECRET must contain 32 to 256 random characters.'],
       [/^(.+?) 必须是有效的 HTTP 或 HTTPS 代理地址$/, (_match, key) => `${key} must be a valid HTTP or HTTPS proxy URL.`]
     ];

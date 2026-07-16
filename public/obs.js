@@ -36,7 +36,6 @@
     geoRegionName: '',
     theme: readTheme(),
     themeMode: readThemeMode(),
-    obsEnabled: false,
     dataStatus: 'connecting',
     serverConnectionState: 'connecting',
     userLocation: readUserLocation()
@@ -106,7 +105,6 @@
       state.theme = resolveThemeMode(state.themeMode);
     }
     if (!params.get('map')) state.mapSourceKey = await secureGet('quakeMapSource', state.mapSourceKey);
-    state.obsEnabled = (await secureGet('quakeObsEnabled', 'false')) === 'true';
     state.mapToken = params.get('tk') || params.get('tiandituToken') || await secureGet('tiandituToken', '');
     if (state.userLocation.source !== 'url') {
       try {
@@ -528,20 +526,28 @@
         : state.dataStatus === 'error'
           ? '数据接口暂时不可用，正在等待实时通道恢复。'
           : '暂无真实地震事件，等待历史或实时数据接入。';
-      list.innerHTML = `<article role="status">${escapeHtml(message)}</article>`;
+      const empty = document.createElement('article');
+      empty.setAttribute('role', 'status');
+      empty.textContent = message;
+      list.replaceChildren(empty);
       list.dataset.ready = String(state.dataStatus !== 'connecting');
       return;
     }
-    list.innerHTML = state.events.slice(0, 5).map(event => {
+    const fragment = document.createDocumentFragment();
+    state.events.slice(0, 5).forEach(event => {
       const key = event.eventKey || getEventKey(event);
       const isNew = listReady && !oldPositions.has(key);
-      return `
-      <article class="mag-${magnitudeBand(event.magnitude)}${isNew ? ' is-new' : ''}" data-key="${escapeAttr(key)}">
-        <strong>${escapeHtml(displayLocation(event))} · ${formatNumber(event.magnitude, ' 级', 1)}</strong>
-        <span>${escapeHtml(event.sourceLabel || event.source)} · ${formatTime(event.originTime || event.receivedAt)} · ${event.isLive ? '实时' : '历史'}</span>
-      </article>
-    `;
-    }).join('');
+      const article = document.createElement('article');
+      article.className = `mag-${magnitudeBand(event.magnitude)}${isNew ? ' is-new' : ''}`;
+      article.dataset.key = key;
+      const title = document.createElement('strong');
+      title.textContent = `${displayLocation(event)} · ${formatNumber(event.magnitude, ' 级', 1)}`;
+      const meta = document.createElement('span');
+      meta.textContent = `${event.sourceLabel || event.source} · ${formatTime(event.originTime || event.receivedAt)} · ${event.isLive ? '实时' : '历史'}`;
+      article.append(title, meta);
+      fragment.appendChild(article);
+    });
+    list.replaceChildren(fragment);
     list.dataset.ready = 'true';
     animateListMoves(list, 'article[data-key]', 'key', oldPositions);
   }
@@ -656,13 +662,6 @@
     await loadPrivateSettings();
     applyTheme(state.theme);
     initAutoTheme();
-    if (!state.obsEnabled) {
-      document.body.classList.add('obs-is-disabled');
-      updateClock();
-      setInterval(updateClock, 1000);
-      return;
-    }
-    document.body.classList.remove('obs-is-disabled');
     applyBootstrapEvents();
     await loadConfig();
     await initMap();

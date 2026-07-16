@@ -1,11 +1,9 @@
 const http = require('http');
-const crypto = require('crypto');
 const WebSocket = require('ws');
-const { assetVersion } = require('../release.json');
+const { assetVersion } = require('./version');
 
 const baseUrl = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3000';
-const publicOrigin = process.env.PUBLIC_ORIGIN || 'https://example.com';
-const invalidPassword = crypto.randomBytes(24).toString('base64url');
+const publicOrigin = process.env.PUBLIC_ORIGIN || 'https://www.cnquake.xyz';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -123,7 +121,8 @@ async function main() {
     'x-forwarded-proto': 'http'
   });
   assert(publicHttp.status === 308, '公开域名 HTTP 请求未强制跳转 HTTPS');
-  assert(String(publicHttp.headers.location || '').startsWith(publicOrigin), 'HTTPS 跳转目标不安全');
+  const redirectTarget = new URL(String(publicHttp.headers.location || ''), baseUrl);
+  assert(redirectTarget.origin === new URL(publicOrigin).origin && redirectTarget.pathname === '/', 'HTTPS 跳转目标不安全');
 
   const unsupportedMethod = await rawResponse('/', {}, 'TRACE');
   assert(unsupportedMethod.status === 405, '不受支持的 HTTP 方法未被拒绝');
@@ -167,6 +166,7 @@ async function main() {
   const configResponse = await fetch(`${baseUrl}/config`);
   const clientConfig = await json(configResponse);
   assert(configResponse.status === 200, '客户端配置接口异常');
+  assert(clientConfig.obsEnabled === true, '服务器未向客户端公开 OBS 已开启状态');
   assert(!Object.prototype.hasOwnProperty.call(clientConfig, 'yandexMapsApiKey'), '普通配置接口泄露 Yandex API Key');
   assert(Number(clientConfig.yandexDailyLimit) <= 100, 'Yandex 每日授权上限超过 100');
   if (clientConfig.yandexConfigured && !clientConfig.yandexQuotaExhausted) {
@@ -196,6 +196,17 @@ async function main() {
     headers: { 'x-forwarded-proto': 'https' }
   });
   assert(invalidPushTestStatus.status === 400, '通知测试结果接口接受了无效编号');
+
+  const invalidPushAck = await fetch(`${baseUrl}/push/test-ack`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-proto': 'https',
+      origin: publicOrigin
+    },
+    body: JSON.stringify({ testId: 'invalid', endpoint: 'https://example.invalid' })
+  });
+  assert(invalidPushAck.status === 400, '设备通知回执接口接受了无效编号或端点');
 
   const invalidResubscribe = await fetch(`${baseUrl}/push/resubscribe`, {
     method: 'POST',
@@ -290,6 +301,7 @@ async function main() {
   }
   assert(smokePushResult && smokePushResult.completed, '通知测试后台结果未完成');
   assert(!Object.prototype.hasOwnProperty.call(smokePushResult, 'endpoint'), '通知测试结果泄露推送端点');
+  assert(!Object.prototype.hasOwnProperty.call(smokePushResult, 'endpointHash'), '通知测试结果泄露推送端点摘要');
   await fetch(`${baseUrl}/push/unsubscribe`, {
     method: 'POST',
     headers: {
@@ -303,14 +315,14 @@ async function main() {
   const crossOrigin = await fetch(`${baseUrl}/debug/verify`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'https://attacker.invalid' },
-    body: JSON.stringify({ password: invalidPassword })
+    body: JSON.stringify({ password: 'invalid' })
   });
   assert(crossOrigin.status === 403, '跨站 POST 未被拒绝');
 
   const crossSiteWithoutOrigin = await fetch(`${baseUrl}/debug/verify`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' },
-    body: JSON.stringify({ password: invalidPassword })
+    body: JSON.stringify({ password: 'invalid' })
   });
   assert(crossSiteWithoutOrigin.status === 403, '缺少 Origin 的跨站 Fetch Metadata 请求未被拒绝');
 
@@ -321,14 +333,14 @@ async function main() {
       'x-forwarded-proto': 'https',
       origin: baseUrl
     },
-    body: JSON.stringify({ password: invalidPassword })
+    body: JSON.stringify({ password: 'invalid' })
   });
   assert(mixedSchemeOrigin.status === 403, 'HTTPS 接口接受了 HTTP Origin');
 
   const wrongPassword = await fetch(`${baseUrl}/debug/verify`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: publicOrigin },
-    body: JSON.stringify({ password: invalidPassword })
+    body: JSON.stringify({ password: 'definitely-wrong' })
   });
   assert(wrongPassword.status === 401, '错误调试密码未返回 401');
 
@@ -341,7 +353,7 @@ async function main() {
         origin: publicOrigin,
         'x-forwarded-for': '203.0.113.77'
       },
-      body: JSON.stringify({ password: invalidPassword })
+      body: JSON.stringify({ password: 'rate-limit-test' })
     });
     limitedStatus = limited.status;
   }
@@ -375,24 +387,7 @@ async function main() {
   const oversizeCloseCode = await websocketOversizeClosed();
   assert(oversizeCloseCode === 1009 || oversizeCloseCode === 1006, '超大 WebSocket 消息关闭码异常');
 
-  console.log(JSON.stringify({
-    ok: true,
-    assetVersion,
-    pushPersistent: Boolean(pushStatus.persistent),
-    yandexDailyLimit: Number(clientConfig.yandexDailyLimit) || 0,
-    historyEvents: historyData.events.length,
-    publicHttpStatus: publicHttp.status,
-    unsupportedMethodStatus: unsupportedMethod.status,
-    traversalStatus: traversal.status,
-    privateEnvStatus: privateEnv.status,
-    oversizedUrlStatus: oversizedUrl,
-    oversizedHeaderStatus: oversizedHeader,
-    crossOriginStatus: crossOrigin.status,
-    wrongPasswordStatus: wrongPassword.status,
-    debugRateLimitStatus: limitedStatus,
-    websocketRejected: rejectedStatus,
-    websocketOversizeCloseCode: oversizeCloseCode
-  }));
+  console.log('Security smoke checks passed.');
 }
 
 main().catch(error => {

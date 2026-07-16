@@ -1,11 +1,14 @@
 (function initQuakePush(global) {
   'use strict';
 
-  const WORKER_URL = '/push-sw.js';
-  const WORKER_SCOPE = '/';
+  const PUSH_WORKERS = Object.freeze({
+    desktop: Object.freeze({ kind: 'desktop', url: '/push-sw.js', scope: '/desktop-push/' }),
+    mobile: Object.freeze({ kind: 'mobile', url: '/sw.js', scope: '/' })
+  });
   const WORKER_ACTIVATION_TIMEOUT_MS = 12000;
   const API_TIMEOUT_MS = 8000;
   const TEST_RESULT_TIMEOUT_MS = 45000;
+  const TEST_RESULT_POLL_MS = 2000;
 
   function isSecurePushContext() {
     return global.location.protocol === 'https:' && global.isSecureContext === true;
@@ -84,16 +87,37 @@
     }
   }
 
-  function projectWorker(registration) {
-    const workers = [registration && registration.active, registration && registration.waiting, registration && registration.installing];
-    return workers.find(worker => ['/push-sw.js', '/sw.js'].includes(workerPath(worker))) || null;
+  function registrationScopePath(registration) {
+    if (!registration || !registration.scope) return '';
+    try {
+      const url = new URL(registration.scope, global.location.origin);
+      return url.origin === global.location.origin ? url.pathname : '';
+    } catch (_error) {
+      return '';
+    }
   }
 
-  async function waitForPushWorkerActivation(registration) {
+  function pushWorkerConfig(options = {}) {
+    return normalizedClientPath(options.clientPath) === '/mobile.html'
+      ? PUSH_WORKERS.mobile
+      : PUSH_WORKERS.desktop;
+  }
+
+  function projectWorker(registration, config) {
+    const workers = [registration && registration.active, registration && registration.waiting, registration && registration.installing];
+    return workers.find(worker => workerPath(worker) === config.url) || null;
+  }
+
+  async function exactWorkerRegistration(config) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    return registrations.find(registration => registrationScopePath(registration) === config.scope) || null;
+  }
+
+  async function waitForPushWorkerActivation(registration, config) {
     const deadline = Date.now() + WORKER_ACTIVATION_TIMEOUT_MS;
     while (Date.now() < deadline) {
       const active = registration && registration.active;
-      if (workerPath(active) === '/push-sw.js' && active.state === 'activated') return registration;
+      if (workerPath(active) === config.url && active.state === 'activated') return registration;
       await delay(100);
     }
     const error = createClientError('推送组件未能在规定时间内完成更新，请重新加载页面后重试。', 'worker_activation_timeout');
@@ -112,10 +136,10 @@
     }).catch(() => {});
   }
 
-  async function resetProjectWorkerRegistration() {
-    const registration = await navigator.serviceWorker.getRegistration(WORKER_SCOPE);
+  async function resetProjectWorkerRegistration(config) {
+    const registration = await exactWorkerRegistration(config);
     if (!registration) return;
-    const knownWorker = projectWorker(registration);
+    const knownWorker = projectWorker(registration, config);
     if (!knownWorker) return;
     const subscription = await registration.pushManager.getSubscription().catch(() => null);
     if (subscription) {
@@ -126,22 +150,52 @@
     await delay(300);
   }
 
-  async function registerPushWorker(reset) {
-    if (reset) await resetProjectWorkerRegistration();
-    const registration = await navigator.serviceWorker.register(WORKER_URL, {
-      scope: WORKER_SCOPE,
+  let desktopMigrationPromise = null;
+
+  async function migrateLegacyDesktopSubscription(config) {
+    if (config.kind !== 'desktop') return;
+    if (!desktopMigrationPromise) {
+      desktopMigrationPromise = (async () => {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        const dedicated = registrations.find(registration => registrationScopePath(registration) === config.scope);
+        const dedicatedSubscription = dedicated
+          ? await dedicated.pushManager.getSubscription().catch(() => null)
+          : null;
+        if (dedicatedSubscription) return;
+
+        const legacy = registrations.find(registration => (
+          registrationScopePath(registration) === PUSH_WORKERS.mobile.scope
+          && projectWorker(registration, PUSH_WORKERS.mobile)
+        ));
+        if (!legacy) return;
+        const legacySubscription = await legacy.pushManager.getSubscription().catch(() => null);
+        if (!legacySubscription) return;
+        await removeServerSubscription(legacySubscription.endpoint);
+        await legacySubscription.unsubscribe().catch(() => false);
+      })().catch(() => {});
+    }
+    await desktopMigrationPromise;
+  }
+
+  async function registerPushWorker(reset, config) {
+    if (reset) await resetProjectWorkerRegistration(config);
+    await migrateLegacyDesktopSubscription(config);
+    const registration = await navigator.serviceWorker.register(config.url, {
+      scope: config.scope,
       updateViaCache: 'none'
     });
     await registration.update().catch(() => {});
-    await waitForPushWorkerActivation(registration);
-    await Promise.race([
-      navigator.serviceWorker.ready,
-      delay(WORKER_ACTIVATION_TIMEOUT_MS).then(() => {
-        const error = createClientError('浏览器未能准备好推送组件，请重新加载页面后重试。', 'worker_ready_timeout');
-        error.name = 'InvalidStateError';
-        throw error;
-      })
-    ]);
+    await waitForPushWorkerActivation(registration, config);
+    if (config.kind === 'mobile') {
+      await Promise.race([
+        navigator.serviceWorker.ready,
+        delay(WORKER_ACTIVATION_TIMEOUT_MS).then(() => {
+          const error = createClientError('浏览器未能准备好推送组件，请重新加载页面后重试。', 'worker_ready_timeout');
+          error.name = 'InvalidStateError';
+          throw error;
+        })
+      ]);
+    }
     return registration;
   }
 
@@ -164,10 +218,10 @@
     return Boolean(error && (error.name === 'AbortError' || error.name === 'InvalidStateError'));
   }
 
-  async function subscribeWithRepair(applicationServerKey) {
+  async function subscribeWithRepair(applicationServerKey, config) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const registration = await registerPushWorker(attempt === 1);
+        const registration = await registerPushWorker(attempt === 1, config);
         let subscription = await registration.pushManager.getSubscription();
         if (subscription && !subscriptionUsesKey(subscription, applicationServerKey)) {
           await removeServerSubscription(subscription.endpoint);
@@ -183,7 +237,7 @@
           userVisibleOnly: true,
           applicationServerKey
         });
-        return { registration, subscription };
+        return { registration, subscription, workerConfig: config };
       } catch (error) {
         if (attempt === 0 && repairableSubscriptionError(error)) continue;
         if (error && typeof error === 'object') {
@@ -226,7 +280,8 @@
     } catch (error) {
       throw createClientError('服务器返回的 VAPID 公钥格式无效，请检查服务端配置。', 'invalid_vapid_public_key', error);
     }
-    const context = await subscribeWithRepair(applicationServerKey);
+    const config = pushWorkerConfig(options);
+    const context = await subscribeWithRepair(applicationServerKey, config);
     const subscribeResult = await fetchJson('/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -283,7 +338,7 @@
   async function waitForTestResult(testId) {
     const deadline = Date.now() + TEST_RESULT_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      await delay(1000);
+      await delay(TEST_RESULT_POLL_MS);
       const result = await fetchJson(`/push/test-status?id=${encodeURIComponent(testId)}`, {
         cache: 'no-store',
         credentials: 'same-origin',
@@ -329,9 +384,9 @@
     return { ...delivery, subscription: context.subscription };
   }
 
-  async function unsubscribe() {
+  async function unsubscribe(options = {}) {
     if (!('serviceWorker' in navigator) || !('PushManager' in global)) return;
-    const registration = await navigator.serviceWorker.getRegistration(WORKER_SCOPE);
+    const registration = await exactWorkerRegistration(pushWorkerConfig(options));
     const subscription = registration && await registration.pushManager.getSubscription();
     if (!subscription) return;
     await removeServerSubscription(subscription.endpoint);
@@ -353,6 +408,10 @@
     return { label: '浏览器厂商推送服务', host: '对应推送服务的 443 端口', extra: '' };
   }
 
+  function isAndroidDevice() {
+    return /Android/i.test(navigator.userAgent || '');
+  }
+
   function errorMessage(error) {
     if (error && error.userMessage) return error.userMessage;
     if (error && error.name === 'NotAllowedError') {
@@ -367,10 +426,32 @@
     return '后台推送订阅失败，请检查 HTTPS、浏览器通知权限和设备网络。';
   }
 
+  function deliveryMessage(result) {
+    const verified = result && result.notificationCreated === true;
+    if (!verified) {
+      return '推送服务已完成发送，但浏览器未返回通知对象校验结果。请打开设备通知中心确认。';
+    }
+    if (isAndroidDevice()) {
+      return '推送已到达手机并创建系统通知，网页已请求高紧急度、声音与振动。若通知只停留在状态栏，请在系统通知设置中把当前浏览器的网站通知渠道设为“紧急”或允许“在屏幕上弹出”，并关闭勿扰和省电限制。';
+    }
+    const service = browserPushService();
+    if (service.label === 'Microsoft Edge / WNS') {
+      if (!result || !result.workerScope || !String(result.workerScope).endsWith('/desktop-push/')) {
+        return '推送仍由旧版 Edge 通道接收。请强制刷新页面一次，网页会自动迁移到独立桌面推送通道，然后重新测试。';
+      }
+      return '推送已到达 Edge 的独立桌面通道，Service Worker 已确认创建系统通知。若仍未看到横幅，请按 Win+N 检查通知中心，并确认 Windows 的 Microsoft Edge 通知横幅、声音和“请勿打扰”设置。';
+    }
+    return '推送已到达浏览器，Service Worker 已确认创建系统通知。若未看到横幅，请检查设备的应用通知、通知中心和勿扰模式。';
+  }
+
   function refreshExistingWorker() {
-    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.getRegistration) return;
-    navigator.serviceWorker.getRegistration(WORKER_SCOPE).then(registration => {
-      if (registration && workerPath(registration.active) === '/push-sw.js') registration.update().catch(() => {});
+    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.getRegistrations) return;
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      registrations.forEach(registration => {
+        const known = projectWorker(registration, PUSH_WORKERS.desktop)
+          || projectWorker(registration, PUSH_WORKERS.mobile);
+        if (known) registration.update().catch(() => {});
+      });
     }).catch(() => {});
   }
 
@@ -382,6 +463,7 @@
     sendEvent,
     unsubscribe,
     errorMessage,
+    deliveryMessage,
     refreshExistingWorker
   });
 })(window);

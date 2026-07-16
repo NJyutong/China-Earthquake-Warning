@@ -160,7 +160,7 @@
     delete root.dataset.embedMode;
     const canvas = document.createElement('div');
     canvas.className = 'provider-map-canvas provider-map-' + key;
-    canvas.id = 'provider-map-' + key + '-' + Math.random().toString(36).slice(2, 9);
+    canvas.id = 'provider-map-' + key + '-' + window.crypto.randomUUID();
     canvas.tabIndex = 0;
     canvas.setAttribute('aria-label', (PROVIDER_LABELS[key] || key) + '交互地图');
     const overlays = document.createElement('div');
@@ -1117,14 +1117,18 @@
     try {
       const current = window.sessionStorage.getItem(storageKey);
       if (/^[A-Za-z0-9_-]{16,96}$/.test(current || '')) return current;
-      const bytes = new Uint8Array(18);
-      window.crypto.getRandomValues(bytes);
-      const value = Array.from(bytes, item => item.toString(16).padStart(2, '0')).join('');
-      window.sessionStorage.setItem(storageKey, value);
-      return value;
     } catch (_error) {
-      return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
+      // A fresh secure session ID still works when session storage is blocked.
     }
+    const bytes = new Uint8Array(18);
+    window.crypto.getRandomValues(bytes);
+    const value = Array.from(bytes, item => item.toString(16).padStart(2, '0')).join('');
+    try {
+      window.sessionStorage.setItem(storageKey, value);
+    } catch (_error) {
+      // Keep the secure in-memory value for this SDK load.
+    }
+    return value;
   }
 
   async function loadEsri() {

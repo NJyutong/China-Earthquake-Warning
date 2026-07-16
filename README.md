@@ -9,8 +9,8 @@
 <p>Real-time earthquake data dashboard for desktop, mobile, and OBS.</p>
 
 <p>
-  <a href="[https://github.com/NJyutong/Earthquake-Live-Monitoring-System/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-3b82f6" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/release-r1-10b981" alt="Release r1">
+  <a href="https://github.com/NJyutong/Earthquake-Live-Monitoring-System/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-3b82f6" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/release-r1.1-10b981" alt="Release r1.1">
   <img src="https://img.shields.io/badge/runtime-Node.js%2018%2B-339933" alt="Node.js 18+">
   <img src="https://img.shields.io/badge/views-desktop%20%7C%20mobile%20%7C%20OBS-7c3aed" alt="Desktop, mobile, and OBS views">
   <a href="https://cnquake.xyz/"><img src="https://img.shields.io/badge/demo-cnquake.xyz-0b72b9" alt="Live demo"></a>
@@ -28,7 +28,7 @@ The server connects to public earthquake data feeds, normalizes incoming events,
 
 ## Demo and screenshots
 
-Click any screenshot to open the live demo.
+Click any screenshot to open the live application.
 
 ### Desktop
 
@@ -46,14 +46,21 @@ Click any screenshot to open the live demo.
   <a href="https://cnquake.xyz/mobile.html"><img src="docs/images/mobile-cn.png" alt="Chinese mobile dashboard" width="360"></a>
 </p>
 
+## Live application
+
+- [Desktop application](https://cnquake.xyz/)
+- [Mobile application](https://cnquake.xyz/mobile.html)
+
 ## Features
 
 - Desktop, mobile, and OBS display modes.
 - Multiple public WebSocket and REST earthquake feeds with normalization, deduplication, caching, and reconnection.
+- Taiwan CWA text normalization from Traditional Chinese to Simplified Chinese before event processing.
 - AMap, Tianditu, Google, Yandex, OpenStreetMap, and Esri map options.
 - P-wave, S-wave, distance, and local-intensity estimates based on user-authorized location.
 - Chinese and English interfaces, device time zones, and light/dark themes.
 - Web Speech voice alerts and Web Push notifications.
+- Unified push-worker handling with desktop/mobile presentation checks and device acknowledgements for test notifications.
 - Password-protected debug tools, request rate limits, and WebSocket limits.
 - Cookie consent and encrypted browser-side preference storage.
 
@@ -101,6 +108,7 @@ Copy `.env.example` to `.env` and configure only the integrations you use. Never
 | --- | --- |
 | `PUBLIC_ORIGIN` | Public HTTPS origin in production |
 | `DEBUG_PASSWORD` | Password for protected debug tools |
+| `OBS_ENABLED` | Server-side OBS route switch; defaults to `true` |
 | `AMAP_JS_KEY` | AMap Web JS key |
 | `AMAP_SECURITY_JSCODE` | AMap security code |
 | `YANDEX_MAPS_API_KEY` | Yandex Maps key |
@@ -109,7 +117,9 @@ Copy `.env.example` to `.env` and configure only the integrations you use. Never
 | `ESRI_API_KEY` | Optional Esri key |
 | `CWA_API_KEY` | Optional Taiwan CWA open-data token |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Optional Web Push key pair |
+| `WEB_PUSH_ENABLED` | Enables production validation for Web Push and requires VAPID settings |
 | `PUSH_RELAY_URL`, `PUSH_RELAY_SECRET` | Optional push relay configuration |
+| `PUSH_TEST_DEVICE_ACK_TIMEOUT_MS` | Device acknowledgement timeout for test notifications; default `20000` |
 
 The service can start without map credentials, but providers that require keys will remain unavailable. Run the production configuration check after filling `.env`:
 
@@ -123,19 +133,28 @@ npm run config-check
 npm run check
 npm run feature-check
 npm run security-check
+npm run ui-check
 ```
+
+`security-check` and `ui-check` start an isolated local server automatically. `package.json` is the single source for release and cache versions; use `npm version <patch|minor|major>` to synchronize HTML, the Service Worker cache, and `release.json`.
+
+OBS is available automatically when the server starts. It is no longer controlled from browser settings; set `OBS_ENABLED=false` on the server to make `/obs` and `/obs.html` return `404`.
 
 ## Deployment
 
 Production deployment instructions and the included systemd workflow are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+Publisher roles, relay endpoints, refresh behavior, and fallback rules are documented in [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
+
 ## Project structure
 
 ```text
 .
+├─ .github/            # CI and security-analysis workflows
 ├─ cloudflare/          # Optional push relay Worker
 ├─ data/.gitkeep       # Empty runtime-data directory
 ├─ docs/               # Deployment guide and screenshots
+├─ lib/                # Shared server-side helpers
 ├─ public/             # Desktop, mobile, OBS, workers, and assets
 ├─ scripts/            # Checks, deployment, and packaging scripts
 ├─ .env.example
@@ -156,7 +175,6 @@ Keep production credentials in `.env` or a secret manager. Do not commit map key
 
 ## License
 
-This project is licensed under the [MIT License](https://github.com/NJyutong/China-Earthquake-Warning/blob/main/LICENSE).
+This project is licensed under the [MIT License](https://github.com/NJyutong/Earthquake-Live-Monitoring-System/blob/main/LICENSE).
 
 Copyright (c) 2026 Zou Yutong
-

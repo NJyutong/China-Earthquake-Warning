@@ -21,7 +21,7 @@
     'quakeTheme',
     'quakeMapSource',
     'quakeIntensityThreshold',
-    'quakeObsEnabled',
+    'quakeVoiceLastSpoken',
     'quakeNotifiedKeys',
     'quakeUserLocation',
     'quakeGuideSeen',

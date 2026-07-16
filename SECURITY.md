@@ -30,9 +30,9 @@
 
 ### Reporting a vulnerability
 
-Use GitHub Private Vulnerability Reporting when enabled. Do not put unpatched vulnerabilities, live credentials, push endpoints, user locations, logs, or usable attack credentials in a public issue.
+Please use GitHub Private Vulnerability Reporting first. Do not submit unpatched vulnerabilities, live credentials, push endpoints, user locations, logs, or directly usable attack credentials in public Issues.
 
-Include affected versions, impact, minimal reproduction steps, and suggested mitigations. Redact every sensitive sample.
+Include the affected version, scope of impact, minimal reproduction steps, and recommended mitigations. All sensitive samples must be redacted.
 
 ### Secrets and credentials
 
@@ -51,4 +51,3 @@ Include affected versions, impact, minimal reproduction steps, and suggested mit
 - Upgrade and retest when providers or npm dependencies publish security advisories.
 
 This project is not warranted as an official earthquake emergency-warning system.
-

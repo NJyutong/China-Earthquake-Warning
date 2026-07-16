@@ -1178,6 +1178,19 @@ body[data-quake-state="error"] .alert-panel {
   display: block;
 }
 
+.alert-title-place.is-taiwan-location {
+  display: grid;
+  gap: 3px;
+  line-height: 1.08;
+}
+
+.alert-title-line {
+  width: max-content;
+  max-width: none;
+  display: block;
+  white-space: nowrap;
+}
+
 .alert-title-unit {
   display: inline-block;
   max-width: 100%;

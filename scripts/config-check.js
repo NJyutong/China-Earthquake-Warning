@@ -6,7 +6,6 @@ const envPath = path.join(root, '.env');
 const debugPasswordPath = path.join(root, 'data', 'debug-password.json');
 const failures = [];
 const warnings = [];
-const results = [];
 
 loadEnvFile();
 
@@ -35,13 +34,6 @@ function firstValue(names) {
   return '';
 }
 
-function required(label, names) {
-  const present = Boolean(firstValue(names));
-  results.push([label, present ? 'configured' : 'missing']);
-  if (!present) failures.push(`${label} is not configured (${names.join(' or ')})`);
-  return present;
-}
-
 function debugPassword() {
   const fromEnv = String(process.env.DEBUG_PASSWORD || '');
   if (fromEnv) return { value: fromEnv, source: '.env/environment' };
@@ -62,26 +54,52 @@ function passwordPolicyError(value) {
   return '';
 }
 
-required('AMap Web JS key', ['AMAP_JS_KEY', 'AMAP_API_KEY', 'AMAP_KEY', 'AMAP_TOKEN', 'GAODE_MAPS_API_KEY']);
-required('AMap security code', ['AMAP_SECURITY_JSCODE', 'AMAP_JSCODE', 'GAODE_SECURITY_JSCODE']);
-required('Yandex Maps key', ['YANDEX_MAPS_API_KEY', 'YANDEX_MAPS_JS_KEY']);
+const amapKey = firstValue(['AMAP_JS_KEY', 'AMAP_API_KEY', 'AMAP_KEY', 'AMAP_TOKEN', 'GAODE_MAPS_API_KEY']);
+const amapSecurityCode = firstValue(['AMAP_SECURITY_JSCODE', 'AMAP_JSCODE', 'GAODE_SECURITY_JSCODE']);
+if (Boolean(amapKey) !== Boolean(amapSecurityCode)) {
+  failures.push('AMap Web JS key and security code must be configured together');
+} else if (!amapKey) {
+  warnings.push('AMap is not configured and will be unavailable');
+}
+
+const optionalMaps = {
+  yandex: firstValue(['YANDEX_MAPS_API_KEY', 'YANDEX_MAPS_JS_KEY']),
+  google: firstValue(['GOOGLE_MAPS_JS_KEY', 'GOOGLE_MAPS_API_KEY']),
+  tianditu: firstValue(['TIANDITU_TOKEN', 'TIANDITU_TK']),
+  esri: firstValue(['ESRI_API_KEY'])
+};
+if (!optionalMaps.yandex) warnings.push('Yandex Maps is not configured and will be unavailable');
+if (!optionalMaps.google) warnings.push('Google Maps JS key is not configured; the official share embed fallback will be used');
+if (!optionalMaps.tianditu) warnings.push('Tianditu server token is not configured; users can still enter a token in the browser');
+if (!optionalMaps.esri) warnings.push('Esri API key is not configured; the public ArcGIS basemap will be used');
+if (!amapKey && Object.values(optionalMaps).every(value => !value)) {
+  warnings.push('No keyed commercial map source is configured; keyless Google, Esri, and OpenStreetMap fallbacks remain available');
+}
 
 const publicOrigin = String(process.env.PUBLIC_ORIGIN || '').trim();
 const secureOrigin = /^https:\/\/[^\s/]+(?:\/.*)?$/i.test(publicOrigin);
-results.push(['Public HTTPS origin', secureOrigin ? 'configured' : 'missing or invalid']);
 if (!secureOrigin) failures.push('PUBLIC_ORIGIN must be an https:// URL');
 
 const password = debugPassword();
 const passwordError = passwordPolicyError(password.value);
-results.push(['Debug password', passwordError ? `invalid (${password.source})` : `configured (${password.source})`]);
 if (passwordError) failures.push(`Debug password ${passwordError}`);
 
 if (!firstValue(['CWA_API_KEY'])) warnings.push('CWA_API_KEY is not configured; the Taiwan CWA source may be unavailable');
-if (!firstValue(['GOOGLE_MAPS_JS_KEY', 'GOOGLE_MAPS_API_KEY'])) warnings.push('Google Maps JS key is not configured; the official share embed fallback will be used');
 
 const vapidPublic = firstValue(['VAPID_PUBLIC_KEY']);
 const vapidPrivate = firstValue(['VAPID_PRIVATE_KEY']);
-if (Boolean(vapidPublic) !== Boolean(vapidPrivate)) failures.push('VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be configured together');
+const webPushSetting = String(process.env.WEB_PUSH_ENABLED || '').trim();
+if (webPushSetting && !/^(?:1|0|true|false|yes|no|on|off)$/i.test(webPushSetting)) {
+  failures.push('WEB_PUSH_ENABLED must be true or false');
+}
+const webPushEnabled = /^(?:1|true|yes|on)$/i.test(webPushSetting) || Boolean(vapidPublic || vapidPrivate);
+if (webPushEnabled) {
+  if (!vapidPublic || !vapidPrivate) failures.push('VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required when Web Push is enabled');
+  const subject = String(process.env.VAPID_SUBJECT || '').trim();
+  if (!/^mailto:[^\s@]+@[^\s@]+$/i.test(subject) && !/^https:\/\/[^\s/]+(?:\/.*)?$/i.test(subject)) {
+    failures.push('VAPID_SUBJECT must be a mailto: address or HTTPS URL when Web Push is enabled');
+  }
+}
 
 const pushRelayUrl = String(process.env.PUSH_RELAY_URL || '').trim();
 const pushRelaySecret = String(process.env.PUSH_RELAY_SECRET || '').trim();
@@ -106,10 +124,21 @@ if (pushProxyUrl) {
   }
 }
 if (pushRelayUrl && pushProxyUrl) warnings.push('PUSH_RELAY_URL takes precedence over PUSH_PROXY_URL');
-results.push(['Push outbound transport', pushRelayUrl ? 'Cloudflare relay' : pushProxyUrl ? 'HTTPS CONNECT proxy' : 'direct']);
+
+const pushAckTimeoutText = String(process.env.PUSH_TEST_DEVICE_ACK_TIMEOUT_MS || '').trim();
+if (pushAckTimeoutText) {
+  const pushAckTimeout = Number(pushAckTimeoutText);
+  if (!Number.isInteger(pushAckTimeout) || pushAckTimeout < 10000 || pushAckTimeout > 45000) {
+    failures.push('PUSH_TEST_DEVICE_ACK_TIMEOUT_MS must be an integer from 10000 to 45000');
+  }
+}
+
+const obsSetting = String(process.env.OBS_ENABLED || '').trim();
+if (obsSetting && !/^(?:1|0|true|false|yes|no|on|off)$/i.test(obsSetting)) {
+  failures.push('OBS_ENABLED must be true or false');
+}
 
 const port = Number(process.env.PORT || 3000);
-results.push(['Node port', Number.isInteger(port) && port > 0 && port <= 65535 ? String(port) : 'invalid']);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) failures.push('PORT must be an integer from 1 to 65535');
 
 if (process.platform !== 'win32' && fs.existsSync(envPath)) {
@@ -117,7 +146,6 @@ if (process.platform !== 'win32' && fs.existsSync(envPath)) {
   if (mode & 0o077) warnings.push('.env is readable or writable by group/others; run chmod 600 .env');
 }
 
-for (const [label, status] of results) console.log(`${label}: ${status}`);
 for (const warning of warnings) console.warn(`WARN: ${warning}`);
 if (failures.length) {
   for (const failure of failures) console.error(`ERROR: ${failure}`);
