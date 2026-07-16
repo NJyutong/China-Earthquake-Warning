@@ -31,7 +31,7 @@ npm run config-check
 - 唯一的强 `DEBUG_PASSWORD`
 - 实际启用地图所需的 Key/安全码
 
-CWA、Web Push、中继、代理和本地 TLS 均为可选。不要把 `.env` 放进 ZIP、镜像层、systemd unit、Shell 历史或仓库。
+CWA、Web Push、中继、代理和本地 TLS 均为可选。公开发布包、镜像层、systemd unit、Shell 历史和仓库不得包含 `.env`。`npm run package` 生成的 `web.zip` 是本项目专用的私有服务器部署包，会按部署需要携带 `.env`；请仅通过受控通道传输并设置严格文件权限。部署脚本只合并发生变化的键值，同时保留服务器端独有配置。
 
 ### 使用随附 systemd 部署脚本
 
@@ -77,21 +77,29 @@ server {
 
 服务端可以直接发送 Web Push，也可以设置一个出站代理，或使用 `cloudflare/push-relay-worker.mjs`。只能选择一种出站模式。
 
-部署 Worker 时把共享密钥写入平台 Secret，不要写入 `wrangler.toml`：
+使用中继时必须先部署 Worker，再部署 Node 服务。Worker 与 Node 都使用同一发布版本和共享密钥；共享密钥写入平台 Secret，不要写入 `wrangler.toml`：
 
 ```bash
 cd cloudflare
-cp wrangler.toml.example wrangler.toml
-npx wrangler secret put PUSH_RELAY_SECRET
-npx wrangler deploy
+test -f wrangler.toml || cp wrangler.toml.example wrangler.toml
+npx --yes wrangler@4.86.0 secret put PUSH_RELAY_SECRET
+npx --yes wrangler@4.86.0 deploy --config wrangler.toml
 ```
 
-然后只在服务器 `.env` 设置 `PUSH_RELAY_URL` 与同一份 `PUSH_RELAY_SECRET`。
+在 Cloudflare Worker 的 Domains 中启用 `push-relay.example.com` 之类的自定义域名。然后只在服务器 `.env` 设置该 HTTPS 地址作为 `PUSH_RELAY_URL`，并设置同一份 `PUSH_RELAY_SECRET`。Node 部署前执行：
+
+```bash
+curl -fsS https://push-relay.example.com/health
+node scripts/push-network-check.js
+```
+
+第一条验证公开路由与 Worker 版本；第二条发送 HMAC 签名探针，同时验证 URL、DNS、路由和共享密钥。测试通知只有在推送厂商接受消息且设备 Service Worker 创建通知并回执后才显示成功。
 
 ### 验证与维护
 
 ```bash
 curl -fsS http://127.0.0.1:3000/health
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:3000/push/status
 npm run check
 npm run feature-check
 node scripts/live-release-check.js https://your-domain.example
@@ -134,7 +142,7 @@ A public deployment requires:
 - A unique strong `DEBUG_PASSWORD`
 - Credentials for every enabled map provider
 
-CWA, Web Push, relay, proxy, and local TLS settings are optional. Never put `.env` in a ZIP, image layer, systemd unit, shell history, or repository.
+CWA, Web Push, relay, proxy, and local TLS settings are optional. Public release archives, image layers, systemd units, shell history, and repositories must not contain `.env`. The `web.zip` produced by `npm run package` is a private, project-specific server deployment archive and intentionally carries `.env`; transfer it only through a controlled channel and enforce restrictive file permissions. The deployment script merges only changed values while retaining server-only configuration.
 
 ### Included systemd deployment script
 
@@ -180,21 +188,29 @@ Configure `TRUST_PROXY` only when Nginx is the sole ingress. Block public access
 
 The server can send Web Push directly, through one outbound proxy, or through `cloudflare/push-relay-worker.mjs`. Select only one outbound mode.
 
-Store the shared secret as a platform Secret, never in `wrangler.toml`:
+When using the relay, deploy the Worker before the Node service. Both use the same release version and shared secret. Store the secret as a platform Secret, never in `wrangler.toml`:
 
 ```bash
 cd cloudflare
-cp wrangler.toml.example wrangler.toml
-npx wrangler secret put PUSH_RELAY_SECRET
-npx wrangler deploy
+test -f wrangler.toml || cp wrangler.toml.example wrangler.toml
+npx --yes wrangler@4.86.0 secret put PUSH_RELAY_SECRET
+npx --yes wrangler@4.86.0 deploy --config wrangler.toml
 ```
 
-Then set `PUSH_RELAY_URL` and the matching `PUSH_RELAY_SECRET` only in the server `.env`.
+Enable a custom domain such as `push-relay.example.com` under the Worker's Domains. Then set that HTTPS URL as `PUSH_RELAY_URL` and set the matching `PUSH_RELAY_SECRET` only in the server `.env`. Before deploying Node, run:
+
+```bash
+curl -fsS https://push-relay.example.com/health
+node scripts/push-network-check.js
+```
+
+The first command verifies the public route and Worker version. The second sends an HMAC-signed probe that verifies the URL, DNS, route, and shared secret. A test notification is reported as successful only after the provider accepts it and the device Service Worker creates the notification and acknowledges it.
 
 ### Verification and maintenance
 
 ```bash
 curl -fsS http://127.0.0.1:3000/health
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:3000/push/status
 npm run check
 npm run feature-check
 node scripts/live-release-check.js https://your-domain.example
@@ -205,4 +221,3 @@ Runtime `data/` may contain push subscriptions, IP audit records, quota sessions
 ### Docker status
 
 There is no tested Dockerfile or Compose configuration. A future container deployment must inject `.env`, TLS private keys, and `data/` through external secrets or persistent volumes and add a dedicated image validation workflow.
-

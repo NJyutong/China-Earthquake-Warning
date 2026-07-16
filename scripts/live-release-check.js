@@ -1,11 +1,9 @@
 const crypto = require('crypto');
-const { assetVersion } = require('../release.json');
+const { assetVersion } = require('./version');
 
-const origins = process.argv.slice(2).filter(Boolean);
-if (!origins.length) {
-  console.error('Usage: node scripts/live-release-check.js https://your-domain.example');
-  process.exit(2);
-}
+const origins = process.argv.slice(2).length
+  ? process.argv.slice(2)
+  : ['https://www.cnquake.xyz', 'https://cnquake.xyz'];
 
 (async () => {
   let failed = false;

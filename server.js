@@ -6,8 +6,10 @@ const crypto = require('crypto');
 const dns = require('dns');
 const net = require('net');
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const WebSocket = require('ws');
-const { assetVersion: ASSET_VERSION } = require('./release.json');
+const { assetVersion: ASSET_VERSION } = require('./scripts/version');
+const { simplifyTaiwanPayload } = require('./lib/taiwan-simplifier');
 let webPush = null;
 let webPushLoadError = null;
 try {
@@ -34,15 +36,19 @@ const {
 } = require('./public/shared');
 
 const LOCAL_ENV_PATH = path.join(__dirname, '.env');
-loadLocalEnv();
+if (!/^(?:1|true|yes|on)$/i.test(String(process.env.SKIP_LOCAL_ENV || ''))) loadLocalEnv();
+
+const DNS_RESULT_ORDER = normalizeDnsResultOrder(process.env.DNS_RESULT_ORDER);
+dns.setDefaultResultOrder(DNS_RESULT_ORDER);
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
-const PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || '').trim().replace(/\/+$/, '');
+const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || 'https://www.cnquake.xyz').replace(/\/+$/, '');
 const AMAP_JS_KEY = process.env.AMAP_JS_KEY || process.env.AMAP_API_KEY || process.env.AMAP_KEY || process.env.AMAP_TOKEN || process.env.GAODE_MAPS_API_KEY || '';
 const AMAP_SECURITY_JSCODE = process.env.AMAP_SECURITY_JSCODE || process.env.AMAP_JSCODE || process.env.GAODE_SECURITY_JSCODE || '';
 const YANDEX_MAPS_API_KEY = process.env.YANDEX_MAPS_API_KEY || process.env.YANDEX_MAPS_JS_KEY || '';
 const YANDEX_DAILY_LIMIT = Math.min(100, Math.max(1, Number(process.env.YANDEX_DAILY_LIMIT || 100) || 100));
+const OBS_ENABLED = !/^(?:0|false|no|off)$/i.test(String(process.env.OBS_ENABLED || 'true'));
 const TRUST_GEO_HEADERS = /^(?:1|true|yes|on)$/i.test(String(process.env.TRUST_GEO_HEADERS || ''));
 const PUSH_TRANSPORT = resolvePushTransport();
 const PUSH_SEND_TIMEOUT_MS = Math.min(
@@ -61,12 +67,13 @@ const HISTORY_CACHE_LIMIT = 30;
 const HISTORY_CACHE_INTERVAL_MS = 5000;
 const USER_FORCE_HISTORY_REFRESH_MS = 5 * 60 * 1000;
 const SOURCE_CACHE_INTERVAL_MS = 60 * 60 * 1000;
-const HISTORY_CACHE_PATH = path.join(__dirname, 'data', 'china-history-cache.json');
-const PUSH_SUBSCRIPTIONS_PATH = path.join(__dirname, 'data', 'push-subscriptions.json');
-const VAPID_KEYS_PATH = path.join(__dirname, 'data', 'vapid-keys.json');
-const DEBUG_PASSWORD_PATH = path.join(__dirname, 'data', 'debug-password.json');
-const DEBUG_AUDIT_PATH = path.join(__dirname, 'data', 'debug-audit.json');
-const YANDEX_QUOTA_PATH = path.join(__dirname, 'data', 'yandex-map-quota.json');
+const DATA_DIR = path.resolve(__dirname, process.env.DATA_DIR || 'data');
+const HISTORY_CACHE_PATH = path.join(DATA_DIR, 'china-history-cache.json');
+const PUSH_SUBSCRIPTIONS_PATH = path.join(DATA_DIR, 'push-subscriptions.json');
+const VAPID_KEYS_PATH = path.join(DATA_DIR, 'vapid-keys.json');
+const DEBUG_PASSWORD_PATH = path.join(DATA_DIR, 'debug-password.json');
+const DEBUG_AUDIT_PATH = path.join(DATA_DIR, 'debug-audit.json');
+const YANDEX_QUOTA_PATH = path.join(DATA_DIR, 'yandex-map-quota.json');
 const DEBUG_AUDIT_RESET_MS = 7 * 24 * 60 * 60 * 1000;
 const WS_MAX_CONNECTIONS_PER_IP = 8;
 const WS_MAX_CONNECTIONS = Math.max(32, Number(process.env.WS_MAX_CONNECTIONS || 512) || 512);
@@ -78,6 +85,17 @@ const MAX_RATE_LIMIT_BUCKETS = 5000;
 const MAX_PUSH_SUBSCRIPTIONS = Math.max(100, Number(process.env.MAX_PUSH_SUBSCRIPTIONS || 10000) || 10000);
 const MAX_PUSH_TEST_RESULTS = 200;
 const PUSH_TEST_RESULT_TTL_MS = 5 * 60 * 1000;
+const PUSH_TEST_DEVICE_ACK_TIMEOUT_MS = Math.min(
+  45000,
+  Math.max(10000, Number(process.env.PUSH_TEST_DEVICE_ACK_TIMEOUT_MS || 20000) || 20000)
+);
+const PUSH_NOTIFICATION_CREATED_MESSAGE = '推送已到达浏览器，Service Worker 已确认创建通知对象。操作系统是否弹出横幅取决于系统通知设置。';
+const PUSH_RELAY_PROBE_TIMEOUT_MS = 7000;
+const PUSH_RELAY_RETRY_INTERVAL_MS = Math.min(
+  15 * 60 * 1000,
+  Math.max(30 * 1000, Number(process.env.PUSH_RELAY_RETRY_INTERVAL_MS || 60 * 1000) || 60 * 1000)
+);
+const PUSH_RELAY_MAX_RESPONSE_BYTES = 64 * 1024;
 const SERVER_MAX_CONNECTIONS = Math.max(64, Number(process.env.SERVER_MAX_CONNECTIONS || 1024) || 1024);
 const CLIENT_COOKIE_PREFIX = 'qs_';
 const CLIENT_COOKIE_RESET_NAMES = ['qs_cookie_consent', 'qs_guide_seen'];
@@ -169,7 +187,7 @@ const sourceStates = new Map();
 const recentEvents = [];
 const pushSubscriptions = new Map();
 const pushTestResults = new Map();
-const pushHttpsAgent = PUSH_TRANSPORT.mode === 'direct' ? createPushHttpsAgent() : null;
+const pushHttpsAgent = ['direct', 'relay'].includes(PUSH_TRANSPORT.mode) ? createPushHttpsAgent() : null;
 const sentPushKeys = new Set();
 const requestBuckets = new Map();
 const userHistoryRefreshes = new Map();
@@ -188,6 +206,8 @@ let pushSupportError = '';
 let pushSubscriptionsLoaded = false;
 let pushSavePromise = Promise.resolve();
 let lastPushDispatch = null;
+let pushRelayProbe = null;
+let pushRelayProbeStartedAt = 0;
 let yandexQuotaState = emptyYandexQuotaState();
 let yandexQuotaSavePromise = Promise.resolve();
 let serverErrorHandled = false;
@@ -200,12 +220,19 @@ startWebSocketHeartbeat();
 app.use(securityHeaders);
 app.use(redirectPublicHttpToHttps);
 app.use(enforceRequestBoundary);
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false
+}));
 app.use(rateLimitBan);
 app.use(rejectCrossOriginMutation);
 app.use('/push', requireHttpsRequest);
 app.use('/map/yandex-access', requireHttpsOrLoopbackRequest);
 app.use(AMAP_SERVICE_PREFIX, proxyAmapService);
 app.use(express.json({ limit: '64kb' }));
+app.get('/obs.html', asyncRoute(sendObsPage));
 app.use('/vendor/ol', express.static(openLayersDir, {
   index: false,
   maxAge: '1d',
@@ -267,7 +294,6 @@ app.get('/push/public-key', (_req, res) => {
   res.json({
     supported,
     publicKey: supported ? vapidKeys.publicKey : '',
-    keyId: supported ? vapidKeyId(vapidKeys.publicKey) : '',
     persistent: supported ? vapidKeysSource !== 'memory' : false,
     message: supported ? '' : pushSupportMessage()
   });
@@ -279,7 +305,6 @@ app.get('/push/status', (_req, res) => {
     ok: true,
     supported,
     subscriptionCount: supported ? pushSubscriptions.size : 0,
-    keyId: supported ? vapidKeyId(vapidKeys.publicKey) : '',
     persistent: supported ? vapidKeysSource !== 'memory' : false,
     transport: publicPushTransport(),
     lastDispatch: lastPushDispatch,
@@ -355,7 +380,7 @@ app.post('/push/unsubscribe', asyncRoute(async (req, res) => {
 app.get('/push/test-status', (req, res) => {
   prunePushTestResults();
   const testId = safeText(req.query && req.query.id, 64);
-  if (!/^[0-9a-f-]{36}$/i.test(testId)) {
+  if (!isPushTestId(testId)) {
     res.status(400).json({ ok: false, message: '通知测试编号无效' });
     return;
   }
@@ -371,8 +396,85 @@ app.get('/push/test-status', (req, res) => {
     completed: result.state === 'completed',
     code: result.code || '',
     message: result.message || '',
-    resetSubscription: Boolean(result.resetSubscription)
+    resetSubscription: Boolean(result.resetSubscription),
+    providerAccepted: Boolean(result.providerAccepted),
+    providerStatus: Number(result.providerStatus) || 0,
+    provider: result.provider || '',
+    transport: result.transport || '',
+    deviceAcknowledged: Boolean(result.deviceAcknowledged),
+    notificationCreated: Boolean(result.notificationCreated),
+    notificationTag: result.notificationTag || '',
+    presentationVerification: result.presentationVerification || '',
+    workerVersion: result.workerVersion || '',
+    workerScope: result.workerScope || '',
+    presentationProfile: result.presentationProfile || '',
+    notificationCount: Number(result.notificationCount) || 0,
+    diagnosticId: result.diagnosticId || ''
   });
+});
+app.post('/push/test-ack', (req, res) => {
+  prunePushTestResults();
+  const testId = safeText(req.body && req.body.testId, 64);
+  const endpoint = normalizePushEndpoint(req.body && req.body.endpoint);
+  const notificationTag = safeText(req.body && req.body.notificationTag, 128);
+  const notificationPresent = req.body && req.body.notificationPresent === true;
+  const presentationVerification = safeText(req.body && req.body.presentationVerification, 32);
+  const workerVersion = safeText(req.body && req.body.workerVersion, 32);
+  const requestedWorkerScope = safeText(req.body && req.body.workerScope, 64);
+  const workerScope = ['/', '/desktop-push/'].includes(requestedWorkerScope) ? requestedWorkerScope : '';
+  const requestedProfile = safeText(req.body && req.body.presentationProfile, 16);
+  const presentationProfile = ['desktop', 'mobile'].includes(requestedProfile) ? requestedProfile : '';
+  const notificationCount = Math.max(0, Math.min(20, Math.floor(Number(req.body && req.body.notificationCount) || 0)));
+  if (!isPushTestId(testId) || !endpoint) {
+    res.status(400).json({ ok: false, message: '设备通知回执无效' });
+    return;
+  }
+  if (!notificationPresent || notificationTag !== `quake-test-${testId}`
+    || !['get-notifications', 'show-promise'].includes(presentationVerification)) {
+    res.status(409).json({ ok: false, message: 'Service Worker 未确认测试通知对象已创建' });
+    return;
+  }
+  const result = pushTestResults.get(testId);
+  if (!result) {
+    res.status(404).json({ ok: false, message: '设备通知回执已过期' });
+    return;
+  }
+  if (!safeSecretEqual(result.endpointHash, pushEndpointHash(endpoint))) {
+    res.status(403).json({ ok: false, message: '设备通知回执与当前订阅不匹配' });
+    return;
+  }
+  if (result.state === 'completed') {
+    if (result.deviceAcknowledged && result.providerAccepted) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ ok: true, acknowledged: true, duplicate: true });
+      return;
+    }
+    res.status(409).json({ ok: false, message: '推送服务未接受该测试消息，设备回执不能覆盖失败结果' });
+    return;
+  }
+  const acknowledgedAt = Date.now();
+  const completed = Boolean(result.providerAccepted);
+  pushTestResults.set(testId, {
+    ...result,
+    state: completed ? 'completed' : 'device_ack_pending',
+    completedAt: completed ? acknowledgedAt : null,
+    acknowledgedAt,
+    ok: completed,
+    code: completed ? 'device_acknowledged' : 'device_ack_pending',
+    message: completed
+      ? PUSH_NOTIFICATION_CREATED_MESSAGE
+      : '浏览器已创建通知对象，正在等待推送服务完成响应。',
+    deviceAcknowledged: true,
+    notificationCreated: true,
+    notificationTag,
+    presentationVerification,
+    workerVersion,
+    workerScope,
+    presentationProfile,
+    notificationCount
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, acknowledged: true });
 });
 app.post('/push/test', asyncRoute(async (req, res) => {
   if (!ensurePushSupport()) {
@@ -392,10 +494,22 @@ app.post('/push/test', asyncRoute(async (req, res) => {
   }
   record.userLocation = readUserLocation(req.body.userLocation) || record.userLocation || null;
   const testId = crypto.randomUUID();
-  pushTestResults.set(testId, { state: 'pending', ok: false, createdAt: Date.now() });
+  const provider = pushServiceInfo(endpoint);
+  const expectedPresentationProfile = pushPresentationProfile(record);
+  pushTestResults.set(testId, {
+    state: 'pending',
+    ok: false,
+    createdAt: Date.now(),
+    endpointHash: pushEndpointHash(endpoint),
+    provider: provider.key,
+    transport: PUSH_TRANSPORT.mode,
+    expectedPresentationProfile,
+    providerAccepted: false,
+    deviceAcknowledged: false
+  });
   prunePushTestResults();
   res.status(202).json({ ok: true, accepted: true, testId });
-  sendPushWithRetry(endpoint, record, event, true)
+  sendPushWithRetry(endpoint, record, event, true, 'initial', testId)
     .then(delivery => completePushTest(testId, delivery))
     .catch(error => completePushTest(testId, {
       ok: false,
@@ -584,9 +698,7 @@ app.post('/debug/change-password', asyncRoute(async (req, res) => {
   await recordDebugAudit('change-password', req, true);
   res.json({ ok: true });
 }));
-app.get('/obs', asyncRoute(async (_req, res) => {
-  await sendPage(res, 'obs.html');
-}));
+app.get('/obs', asyncRoute(sendObsPage));
 app.get('/mobile', asyncRoute(async (_req, res) => {
   if (!isMobileRequest(_req)) {
     res.redirect(302, '/?desktop=1');
@@ -623,6 +735,14 @@ async function sendPage(res, fileName) {
   } catch (_error) {
     res.sendFile(filePath);
   }
+}
+
+async function sendObsPage(_req, res) {
+  if (!OBS_ENABLED) {
+    res.status(404).type('text/plain').send('OBS output is disabled by server configuration.');
+    return;
+  }
+  await sendPage(res, 'obs.html');
 }
 
 function loadLocalEnv() {
@@ -663,7 +783,8 @@ function publicClientConfig(req) {
     yandexQuotaRemaining: quota.remaining,
     yandexQuotaExhausted: quota.used >= YANDEX_DAILY_LIMIT,
     clientCountryCode: normalizedCountryCode,
-    esriApiKey: process.env.ESRI_API_KEY || ''
+    esriApiKey: process.env.ESRI_API_KEY || '',
+    obsEnabled: OBS_ENABLED
   };
 }
 
@@ -815,7 +936,7 @@ function proxyAmapService(req, res) {
     method: req.method,
     headers: {
       'User-Agent': 'china-earthquake-live-screen/1.0',
-      'Referer': `${publicOrigin(req)}/`
+      'Referer': `${PUBLIC_ORIGIN}/`
     },
     timeout: 8000
   }, response => {
@@ -1097,11 +1218,7 @@ function vapidSubject() {
   } catch (_error) {
     // 使用公开站点地址作为稳定的 VAPID 联系信息。
   }
-  return 'mailto:admin@example.com';
-}
-
-function vapidKeyId(publicKey) {
-  return crypto.createHash('sha256').update(String(publicKey || '')).digest('base64url').slice(0, 16);
+  return 'https://www.cnquake.xyz';
 }
 
 function loadVapidKeys() {
@@ -1218,6 +1335,7 @@ function createPushHttpsAgent() {
   return new https.Agent({
     keepAlive: true,
     maxSockets: 32,
+    minVersion: 'TLSv1.2',
     lookup(hostname, options, callback) {
       const lookupOptions = {
         family: options && options.family || 0,
@@ -1229,7 +1347,9 @@ function createPushHttpsAgent() {
           callback(error);
           return;
         }
-        const publicAddresses = (addresses || []).filter(item => isPublicIp(item.address));
+        const publicAddresses = (addresses || [])
+          .filter(item => isPublicIp(item.address))
+          .sort((left, right) => addressFamilyPriority(left.family) - addressFamilyPriority(right.family));
         if (!publicAddresses.length) {
           callback(new Error('推送服务地址解析到非公网 IP'));
           return;
@@ -1239,6 +1359,15 @@ function createPushHttpsAgent() {
       });
     }
   });
+}
+
+function normalizeDnsResultOrder(value) {
+  return String(value || '').trim().toLowerCase() === 'verbatim' ? 'verbatim' : 'ipv4first';
+}
+
+function addressFamilyPriority(family) {
+  if (DNS_RESULT_ORDER === 'ipv4first') return Number(family) === 4 ? 0 : 1;
+  return 0;
 }
 
 function resolvePushTransport() {
@@ -1298,11 +1427,27 @@ function normalizePushRelayUrl(value) {
 }
 
 function publicPushTransport() {
-  return {
+  const transport = {
     mode: PUSH_TRANSPORT.mode,
     proxyConfigured: PUSH_TRANSPORT.mode === 'proxy',
     relayConfigured: PUSH_TRANSPORT.mode === 'relay'
   };
+  if (PUSH_TRANSPORT.mode === 'proxy') transport.proxySource = PUSH_TRANSPORT.source || 'PUSH_PROXY_URL';
+  if (PUSH_TRANSPORT.mode === 'relay') {
+    const relayUrl = new URL(PUSH_TRANSPORT.relayUrl);
+    transport.relayHost = relayUrl.hostname;
+    transport.relayPath = relayUrl.pathname || '/';
+    transport.relayProbe = pushRelayProbe ? { ...pushRelayProbe } : null;
+  }
+  return transport;
+}
+
+function pushEndpointHash(endpoint) {
+  return crypto.createHash('sha256').update(String(endpoint || '')).digest('hex');
+}
+
+function isPushTestId(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
 
 function safeText(value, maxLength = 160) {
@@ -1341,6 +1486,10 @@ function sanitizePushTestEvent(input) {
 
 function sanitizePushClientPath(value) {
   return value === '/mobile.html' ? '/mobile.html' : '/';
+}
+
+function pushPresentationProfile(record) {
+  return sanitizePushClientPath(record && record.clientPath) === '/mobile.html' ? 'mobile' : 'desktop';
 }
 
 function clampPushThreshold(value) {
@@ -1479,6 +1628,52 @@ function prunePushTestResults() {
 function completePushTest(testId, delivery) {
   const previous = pushTestResults.get(testId);
   if (!previous) return;
+  if (delivery && delivery.ok) {
+    if (previous.deviceAcknowledged) {
+      pushTestResults.set(testId, {
+        ...previous,
+        state: 'completed',
+        completedAt: Date.now(),
+        ok: true,
+        code: 'device_acknowledged',
+        message: PUSH_NOTIFICATION_CREATED_MESSAGE,
+        providerAccepted: true,
+        providerStatus: Number(delivery.providerStatus) || 0,
+        provider: safeText(delivery.provider, 32) || previous.provider,
+        transport: safeText(delivery.transport, 16) || previous.transport,
+        diagnosticId: safeText(delivery.diagnosticId, 64)
+      });
+      return;
+    }
+    pushTestResults.set(testId, {
+      ...previous,
+      state: 'provider_accepted',
+      acceptedAt: Date.now(),
+      ok: true,
+      code: 'provider_accepted',
+      message: '浏览器推送服务已接受消息，正在等待当前设备确认。',
+      providerAccepted: true,
+      providerStatus: Number(delivery.providerStatus) || 0,
+      provider: safeText(delivery.provider, 32) || previous.provider,
+      transport: safeText(delivery.transport, 16) || previous.transport,
+      diagnosticId: safeText(delivery.diagnosticId, 64)
+    });
+    const timeout = setTimeout(() => {
+      const current = pushTestResults.get(testId);
+      if (!current || current.state !== 'provider_accepted') return;
+      pushTestResults.set(testId, {
+        ...current,
+        state: 'completed',
+        completedAt: Date.now(),
+        ok: false,
+        code: 'device_ack_timeout',
+        message: '推送服务已接受消息，但当前设备未确认显示通知。请检查浏览器后台运行权限、系统通知设置和专注模式后重试。',
+        deviceAcknowledged: false
+      });
+    }, PUSH_TEST_DEVICE_ACK_TIMEOUT_MS);
+    if (timeout.unref) timeout.unref();
+    return;
+  }
   pushTestResults.set(testId, {
     ...previous,
     state: 'completed',
@@ -1486,45 +1681,61 @@ function completePushTest(testId, delivery) {
     ok: Boolean(delivery && delivery.ok),
     code: safeText(delivery && delivery.code, 64),
     message: safeText(delivery && delivery.message, 240),
-    resetSubscription: Boolean(delivery && delivery.resetSubscription)
+    resetSubscription: Boolean(delivery && delivery.resetSubscription),
+    provider: safeText(delivery && delivery.provider, 32) || previous.provider,
+    transport: safeText(delivery && delivery.transport, 16) || previous.transport,
+    diagnosticId: safeText(delivery && delivery.diagnosticId, 64)
   });
 }
 
-async function sendPushWithRetry(endpoint, record, event, force, phase = 'initial') {
+async function sendPushWithRetry(endpoint, record, event, force, phase = 'initial', testId = '') {
   let result = null;
   const maxAttempts = force ? 1 : 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    result = await sendPushToRecord(endpoint, record, event, force, phase);
+    result = await sendPushToRecord(endpoint, record, event, force, phase, testId);
     if (result.ok || !result.retryable || attempt === maxAttempts) return result;
     await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 1000 : 3000));
   }
   return result || { ok: false, code: 'push_delivery_failed', message: '后台推送发送失败' };
 }
 
-async function sendPushToRecord(endpoint, record, event, force, phase = 'initial') {
+async function sendPushToRecord(endpoint, record, event, force, phase = 'initial', testId = '') {
   const key = event.eventKey || getEventKey(event);
+  const validTestId = isPushTestId(testId) ? testId : '';
   const sentKey = `${endpoint}:${key}:${phase}`;
   if (!force && sentPushKeys.has(sentKey)) return { ok: true, duplicate: true };
   sentPushKeys.add(sentKey);
   const copy = pushNotificationCopy(event, record.userLocation, phase);
+  const presentationProfile = pushPresentationProfile(record);
   const payload = JSON.stringify({
     title: copy.title,
     body: copy.body,
     icon: '/app-icon.png',
-    tag: `${key}-${phase}`,
+    tag: validTestId ? `quake-test-${validTestId}` : `${key}-${phase}`,
     url: sanitizePushClientPath(record.clientPath),
     magnitude: Number(event.magnitude) || null,
-    timestamp: event.originTime || event.receivedAt || new Date().toISOString(),
-    requireInteraction: Number(event.magnitude) >= 5
+    timestamp: validTestId ? new Date().toISOString() : event.originTime || event.receivedAt || new Date().toISOString(),
+    requireInteraction: Boolean(validTestId) || Number(event.magnitude) >= 5,
+    presentationProfile,
+    vibrate: presentationProfile === 'mobile' ? [280, 120, 280] : undefined,
+    testId: validTestId
   });
   try {
-    await deliverWebPush(record.subscription, payload, {
-      TTL: 3600,
+    const response = await deliverWebPush(record.subscription, payload, {
+      TTL: validTestId ? 120 : 3600,
       urgency: 'high',
-      topic: crypto.createHash('sha256').update(`${key}:${phase}`).digest('base64url').slice(0, 32),
+      topic: crypto.createHash('sha256').update(`${key}:${phase}:${validTestId}`).digest('base64url').slice(0, 32),
       timeout: PUSH_SEND_TIMEOUT_MS
     });
-    return { ok: true };
+    const provider = pushServiceInfo(endpoint);
+    return {
+      ok: true,
+      providerAccepted: true,
+      providerStatus: Number(response && response.statusCode) || 0,
+      provider: provider.key,
+      transport: PUSH_TRANSPORT.mode,
+      diagnosticId: safeText(response && response.diagnosticId, 64)
+    };
   } catch (error) {
     sentPushKeys.delete(sentKey);
     const failure = classifyPushDeliveryError(error, endpoint);
@@ -1559,27 +1770,19 @@ async function sendWebPushThroughRelay(subscription, payload, options) {
     headers: requestDetails.headers,
     body: Buffer.from(requestDetails.body || '').toString('base64')
   });
-  const relayTimestamp = String(Math.floor(Date.now() / 1000));
-  const relaySignature = crypto
-    .createHmac('sha256', PUSH_TRANSPORT.relaySecret)
-    .update(`${relayTimestamp}.${relayBody}`)
-    .digest('hex');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PUSH_SEND_TIMEOUT_MS + 2000);
+  const relayHeaders = signedPushRelayHeaders(relayBody);
   try {
-    const response = await fetch(PUSH_TRANSPORT.relayUrl, {
+    const response = await requestPushRelay(PUSH_TRANSPORT.relayUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'cnquake-push-relay-client/1.0',
-        'X-Cnquake-Timestamp': relayTimestamp,
-        'X-Cnquake-Signature': relaySignature
+        ...relayHeaders
       },
       body: relayBody,
-      redirect: 'error',
-      signal: controller.signal
+      timeoutMs: PUSH_SEND_TIMEOUT_MS + 2000
     });
-    const text = await response.text();
+    const text = response.body;
     let data = null;
     try {
       data = JSON.parse(text);
@@ -1592,6 +1795,8 @@ async function sendWebPushThroughRelay(subscription, payload, options) {
       );
       relayError.code = response.ok ? 'PUSH_RELAY_INVALID_RESPONSE' : `PUSH_RELAY_HTTP_${response.status}`;
       relayError.pushTransport = 'relay';
+      relayError.relayRequestId = safeText(data && data.requestId, 64);
+      relayError.relayCode = safeText(data && data.code, 64);
       throw relayError;
     }
     if (!data.ok) {
@@ -1599,14 +1804,176 @@ async function sendWebPushThroughRelay(subscription, payload, options) {
       providerError.statusCode = Number(data.status);
       providerError.body = safeText(data.body, 500);
       providerError.pushTransport = 'relay';
+      providerError.relayRequestId = safeText(data.requestId, 64);
+      providerError.relayCode = safeText(data.code, 64);
       throw providerError;
     }
-    return { statusCode: Number(data.status), body: safeText(data.body, 500) };
+    return {
+      statusCode: Number(data.status),
+      body: safeText(data.body, 500),
+      diagnosticId: safeText(data.requestId, 64)
+    };
   } catch (error) {
     if (error && !error.pushTransport) error.pushTransport = 'relay';
+    if (!pushRelayProbe || pushRelayProbe.ok !== true) refreshPushRelayProbe(false).catch(() => {});
     throw error;
-  } finally {
-    clearTimeout(timer);
+  }
+}
+
+function requestPushRelay(value, options = {}) {
+  const target = value instanceof URL ? new URL(value.href) : new URL(String(value));
+  const configured = new URL(PUSH_TRANSPORT.relayUrl);
+  if (target.protocol !== 'https:' || target.origin !== configured.origin) {
+    const error = new Error('推送中继请求地址与已配置来源不一致');
+    error.code = 'PUSH_RELAY_URL_MISMATCH';
+    return Promise.reject(error);
+  }
+
+  const method = String(options.method || 'GET').toUpperCase();
+  const body = options.body == null ? '' : String(options.body);
+  const headers = { Accept: 'application/json', ...(options.headers || {}) };
+  if (body && !Object.keys(headers).some(name => name.toLowerCase() === 'content-length')) {
+    headers['Content-Length'] = Buffer.byteLength(body);
+  }
+  const timeoutMs = Math.min(
+    32000,
+    Math.max(1000, Number(options.timeoutMs || PUSH_RELAY_PROBE_TIMEOUT_MS) || PUSH_RELAY_PROBE_TIMEOUT_MS)
+  );
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (handler, valueToReturn) => {
+      if (settled) return;
+      settled = true;
+      handler(valueToReturn);
+    };
+    const request = https.request(target, {
+      method,
+      headers,
+      agent: pushHttpsAgent,
+      rejectUnauthorized: true
+    }, response => {
+      const chunks = [];
+      let bytes = 0;
+      response.on('data', chunk => {
+        bytes += chunk.length;
+        if (bytes > PUSH_RELAY_MAX_RESPONSE_BYTES) {
+          const error = new Error('推送中继响应超过允许大小');
+          error.code = 'PUSH_RELAY_RESPONSE_TOO_LARGE';
+          response.destroy(error);
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.once('error', error => finish(reject, error));
+      response.once('end', () => {
+        const status = Number(response.statusCode) || 0;
+        finish(resolve, {
+          ok: status >= 200 && status < 300,
+          status,
+          body: Buffer.concat(chunks).toString('utf8')
+        });
+      });
+    });
+    request.setTimeout(timeoutMs, () => {
+      const error = new Error(`推送中继连接超时（${timeoutMs}ms）`);
+      error.code = 'ETIMEDOUT';
+      request.destroy(error);
+    });
+    request.once('error', error => finish(reject, error));
+    request.end(body || undefined);
+  });
+}
+
+function signedPushRelayHeaders(body) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = crypto
+    .createHmac('sha256', PUSH_TRANSPORT.relaySecret)
+    .update(`${timestamp}.${body}`)
+    .digest('hex');
+  return {
+    'X-Cnquake-Timestamp': timestamp,
+    'X-Cnquake-Signature': signature
+  };
+}
+
+async function refreshPushRelayProbe(force = false) {
+  if (PUSH_TRANSPORT.mode !== 'relay') return null;
+  const now = Date.now();
+  if (!force && (pushRelayProbe && pushRelayProbe.state === 'checking' || now - pushRelayProbeStartedAt < 30000)) {
+    return pushRelayProbe;
+  }
+  pushRelayProbeStartedAt = now;
+  const relayUrl = new URL(PUSH_TRANSPORT.relayUrl);
+  pushRelayProbe = {
+    state: 'checking',
+    ok: false,
+    host: relayUrl.hostname,
+    checkedAt: new Date(now).toISOString()
+  };
+  try {
+    const healthResponse = await requestPushRelay(new URL('/health', relayUrl), {
+      timeoutMs: PUSH_RELAY_PROBE_TIMEOUT_MS
+    });
+    const health = parseJsonObject(healthResponse.body);
+    if (!healthResponse.ok || !health.ok) throw new Error(`中继健康接口返回 HTTP ${healthResponse.status}`);
+
+    const probeBody = JSON.stringify({ probe: true });
+    const probeResponse = await requestPushRelay(new URL('/diagnostics', relayUrl), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'cnquake-push-relay-client/1.0',
+        ...signedPushRelayHeaders(probeBody)
+      },
+      body: probeBody,
+      timeoutMs: PUSH_RELAY_PROBE_TIMEOUT_MS
+    });
+    const probe = parseJsonObject(probeResponse.body);
+    const authenticated = probeResponse.ok && probe.ok === true && probe.authenticated === true;
+    pushRelayProbe = {
+      state: authenticated ? 'ready' : 'failed',
+      ok: authenticated,
+      host: relayUrl.hostname,
+      checkedAt: new Date().toISOString(),
+      healthVersion: safeText(health.version, 32),
+      authenticated,
+      status: probeResponse.status,
+      code: safeText(probe.code, 64),
+      requestId: safeText(probe.requestId, 64)
+    };
+  } catch (error) {
+    const codes = Array.from(pushErrorCodes(error));
+    pushRelayProbe = {
+      state: 'failed',
+      ok: false,
+      host: relayUrl.hostname,
+      checkedAt: new Date().toISOString(),
+      authenticated: false,
+      code: safeText(codes[0] || error && error.name || 'relay_probe_failed', 64),
+      message: safeText(error && error.message, 160)
+    };
+  }
+  return pushRelayProbe;
+}
+
+function startPushRelayRecoveryMonitor() {
+  if (PUSH_TRANSPORT.mode !== 'relay') return;
+  const timer = setInterval(() => {
+    if (pushRelayProbe && pushRelayProbe.ok === true) return;
+    refreshPushRelayProbe(true).then(result => {
+      if (result && result.ok) console.log(`后台推送中继已恢复: ${result.host}，签名配置一致`);
+    }).catch(() => {});
+  }, PUSH_RELAY_RETRY_INTERVAL_MS);
+  if (timer.unref) timer.unref();
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(String(value || ''));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_error) {
+    return {};
   }
 }
 
@@ -1650,7 +2017,11 @@ function classifyPushDeliveryError(error, endpoint) {
   const message = String(error && error.message || '');
   const service = pushServiceInfo(endpoint);
   const transport = safeText(error && error.pushTransport, 16) || PUSH_TRANSPORT.mode;
-  const context = { provider: service.key, transport };
+  const context = {
+    provider: service.key,
+    transport,
+    diagnosticId: safeText(error && error.relayRequestId, 64)
+  };
   if (statusCode === 404 || statusCode === 410) {
     return {
       ...context,
@@ -1684,11 +2055,12 @@ function classifyPushDeliveryError(error, endpoint) {
       : relayStatus && relayStatus[1] === '502'
         ? `Cloudflare 推送中继无法连接 ${service.label}（${service.hostPattern}:443），请检查 Worker 出站状态。`
         : `Cloudflare 推送中继返回异常${relayStatus ? `（HTTP ${relayStatus[1]}）` : ''}，请检查 Worker 路由、WAF 和服务日志。`;
+    const diagnosticSuffix = context.diagnosticId ? ` 诊断编号：${context.diagnosticId}。` : '';
     return {
       ...context,
       httpStatus: 502,
       code: code.toLowerCase(),
-      message: relayMessage,
+      message: `${relayMessage}${diagnosticSuffix}`,
       retryable: Boolean(relayStatus && Number(relayStatus[1]) >= 500)
     };
   }
@@ -1708,7 +2080,7 @@ function classifyPushDeliveryError(error, endpoint) {
     const relayFailed = transport === 'relay';
     const proxyFailed = transport === 'proxy';
     const deliveryMessage = relayFailed
-      ? `服务器无法连接 Cloudflare 推送中继，请检查 PUSH_RELAY_URL、Worker 路由和密钥配置。目标推送服务为 ${service.label}。`
+      ? `服务器无法连接已配置的 Cloudflare 推送中继（${publicPushTransport().relayHost || '未知主机'}），请检查运行中服务的 PUSH_RELAY_URL、DNS 和 Worker 路由。目标推送服务为 ${service.label}。`
       : proxyFailed
         ? `服务器通过 PUSH_PROXY_URL 仍无法连接 ${service.label}，请检查代理出站规则及 ${service.hostPattern}:443。`
         : `服务器无法直连 ${service.label}（${service.hostPattern}:443）。这是服务器出站网络问题，不是浏览器通知权限；请放行该域名，或配置 PUSH_PROXY_URL / Cloudflare 推送中继。`;
@@ -2170,7 +2542,7 @@ async function fetchJsonWithCache(key, url, ttlMs, timeoutMs) {
   try {
     const response = await fetch(String(url), {
       signal: controller.signal,
-      headers: { 'User-Agent': 'china-earthquake-live-screen/1.0' }
+      headers: { 'User-Agent': 'cnquake-dashboard/1.0 (+https://www.cnquake.xyz)' }
     });
     if (!response.ok) return null;
     const data = await response.json();
@@ -2722,7 +3094,8 @@ async function pollSource(source, options = {}) {
     const cacheEvents = [];
 
     for (const record of records) {
-      const base = normalizeEarthquakeData(source, record);
+      const sourceRecord = source.key === 'cwa_taiwan' ? simplifyTaiwanPayload(record) : record;
+      const base = normalizeEarthquakeData(source, sourceRecord);
       if (!isRealEarthquake(base)) continue;
       cacheEvents.push({
         ...base,
@@ -3042,7 +3415,20 @@ function start() {
     reconcileSources();
     const protocol = server.isHttps ? 'https' : 'http';
     console.log(`中国地震数据监控已启动: ${protocol}://${HOST}:${PORT}`);
-    console.log(`OBS 浏览器源: ${protocol}://${HOST}:${PORT}/obs`);
+    console.log(`出站 DNS 地址顺序: ${DNS_RESULT_ORDER}`);
+    console.log(OBS_ENABLED ? `OBS 浏览器源: ${protocol}://${HOST}:${PORT}/obs` : 'OBS 浏览器源已由服务器配置关闭');
+    const pushTransport = publicPushTransport();
+    if (pushTransport.mode === 'relay') {
+      console.log(`后台推送传输: Cloudflare 中继 ${pushTransport.relayHost}${pushTransport.relayPath}`);
+      refreshPushRelayProbe(true).then(result => {
+        console.log(result && result.ok
+          ? `后台推送中继自检通过: ${result.host}，签名配置一致`
+          : `后台推送中继自检失败: ${result && result.host || pushTransport.relayHost} ${result && result.code || ''}`);
+      }).catch(() => {});
+      startPushRelayRecoveryMonitor();
+    } else {
+      console.log(`后台推送传输: ${pushTransport.mode}`);
+    }
   });
 }
 

@@ -748,6 +748,28 @@
     return rounded <= 0 ? expiredLabel : `${rounded} 秒`;
   }
 
+  function taiwanLocationLayout(value, source) {
+    const text = String(value || '').trim();
+    const sourceText = typeof source === 'object' && source
+      ? `${source.source || ''} ${source.sourceLabel || ''}`
+      : String(source || '');
+    if (!text || !/(?:cwa_taiwan|中国台湾\s*CWA|中央气象署)/i.test(sourceText)) return null;
+
+    const qualifierMatch = text.match(/^(.*?)\s*[（(]\s*(位于.+?)\s*[）)]\s*$/);
+    const main = String(qualifierMatch ? qualifierMatch[1] : text).trim();
+    const detail = main.match(/^(.+?政府)\s*([东南西北中偏]+方)\s*([0-9]+(?:\.[0-9]+)?)\s*公里$/);
+    const primaryLine = detail
+      ? `${detail[1]} ${detail[2]} ${detail[3]} 公里`
+      : main;
+    const lines = [primaryLine || text];
+    if (qualifierMatch && qualifierMatch[2]) lines.push(`（${qualifierMatch[2].trim()}）`);
+    return {
+      source: 'cwa_taiwan',
+      fullText: text,
+      lines
+    };
+  }
+
   function liveChannelStatus(connectedCount, serverConnectionState, hasFreshSourceSnapshot, minHealthy = 4) {
     const connected = Math.max(0, Math.floor(Number(connectedCount) || 0));
     const threshold = Math.max(1, Math.floor(Number(minHealthy) || 4));
@@ -793,6 +815,7 @@
     formatTime,
     formatTimeWithZone,
     formatCountdown,
+    taiwanLocationLayout,
     liveChannelStatus
   };
 });

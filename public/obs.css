@@ -53,39 +53,6 @@ html.theme-transitioning *::after {
   transition-delay: 0ms !important;
 }
 
-.obs-disabled {
-  display: none;
-}
-
-body.obs-is-disabled .obs-disabled {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: grid;
-  place-items: center;
-  background: var(--bg);
-  text-align: center;
-}
-
-body.obs-is-disabled .obs-disabled div {
-  max-width: 720px;
-  padding: 36px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: rgba(9, 18, 32, 0.86);
-}
-
-body.obs-is-disabled .obs-disabled h1 {
-  margin: 0 0 12px;
-  font-size: 48px;
-}
-
-body.obs-is-disabled .obs-disabled p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 22px;
-}
-
 body::before,
 body::after {
   content: "";
@@ -119,7 +86,7 @@ dd {
   height: 100vh;
   padding: 24px;
   display: grid;
-  grid-template-rows: clamp(70px, 8.5vh, 92px) minmax(0, 1fr) clamp(104px, 12.2vh, 132px) 34px;
+  grid-template-rows: clamp(70px, 8.5vh, 92px) minmax(0, 1fr) clamp(104px, 12.2vh, 132px);
   gap: 14px;
 }
 
@@ -674,6 +641,14 @@ html[data-theme="light"] .amap-layer img {
   *::after {
     animation-duration: 1ms !important;
     transition-duration: 1ms !important;
+  }
+}
+
+@media (min-width: 801px) and (max-height: 1000px) {
+  .obs-shell {
+    padding: 18px 24px;
+    grid-template-rows: 70px minmax(0, 1fr) 102px;
+    gap: 12px;
   }
 }
 

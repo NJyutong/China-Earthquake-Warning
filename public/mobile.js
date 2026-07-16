@@ -31,6 +31,7 @@
     formatTime = value => value || '--',
     formatTimeWithZone = value => value || '--',
     formatCountdown = value => Number.isFinite(Number(value)) && Number(value) > 0 ? `${Math.round(Number(value))} 秒` : '已结束',
+    taiwanLocationLayout = () => null,
     liveChannelStatus = (connected, serverState, hasSnapshot, threshold = 4) => {
       if (hasSnapshot && connected >= threshold) return { tone: 'connected', label: '实时通道已连接' };
       if (hasSnapshot && connected > 0) return { tone: 'warning', label: '实时通道正在连接' };
@@ -114,6 +115,48 @@
   function text(id, value) {
     const node = $(id);
     if (node) node.textContent = value == null || value === '' ? '--' : String(value);
+  }
+
+  let mobileLocationFitFrame = 0;
+
+  function renderMobileEventLocation(event, value) {
+    const node = $('selected-location');
+    if (!node) return;
+    const location = String(value || '--');
+    const layout = taiwanLocationLayout(location, event);
+    node.classList.toggle('is-taiwan-location', Boolean(layout));
+    node.style.fontSize = '';
+    if (!layout) {
+      node.textContent = location;
+      node.setAttribute('aria-label', location);
+      return;
+    }
+
+    const english = Boolean(window.QuakeI18n && window.QuakeI18n.isEnglish);
+    const translatedLocation = english && window.QuakeI18n ? window.QuakeI18n.t(location) : location;
+    const englishParts = String(translatedLocation).match(/^(.*?)\s*(\([^()]+\))$/);
+    const lines = english
+      ? englishParts ? [englishParts[1].trim(), englishParts[2]] : [translatedLocation]
+      : layout.lines;
+    node.replaceChildren(...lines.filter(Boolean).map(line => {
+      const span = document.createElement('span');
+      span.className = 'mobile-location-line';
+      span.textContent = line;
+      return span;
+    }));
+    node.setAttribute('aria-label', translatedLocation);
+    if (mobileLocationFitFrame) window.cancelAnimationFrame(mobileLocationFitFrame);
+    mobileLocationFitFrame = window.requestAnimationFrame(() => {
+      mobileLocationFitFrame = 0;
+      node.style.fontSize = '';
+      const availableWidth = node.clientWidth;
+      const baseSize = Number.parseFloat(window.getComputedStyle(node).fontSize) || 24;
+      const widestLine = Array.from(node.querySelectorAll('.mobile-location-line'))
+        .reduce((width, line) => Math.max(width, line.scrollWidth), 0);
+      if (availableWidth && widestLine > availableWidth) {
+        node.style.fontSize = `${Math.max(18, Math.floor(baseSize * availableWidth / widestLine))}px`;
+      }
+    });
   }
 
   function escapeHtml(value) {
@@ -436,7 +479,7 @@
 
   async function disableMobileNotifications() {
     try {
-      if (window.QuakePush) await window.QuakePush.unsubscribe();
+      if (window.QuakePush) await window.QuakePush.unsubscribe(mobilePushOptions());
     } catch (_error) {
       // 关闭时以本地状态为准，失效订阅由服务端发送时清理。
     }
@@ -1312,7 +1355,7 @@
       text('selected-source', connecting ? '正在连接服务器中' : '等待数据');
       text('selected-status', connecting ? '连接中' : state.historyError ? '接口异常' : '暂无记录');
       setSeverityTone('selected-status', null);
-      text('selected-location', connecting ? '等待服务器返回地震数据' : '当前区域暂无地震记录');
+      renderMobileEventLocation(null, connecting ? '等待服务器返回地震数据' : '当前区域暂无地震记录');
       text('selected-mag', '-- 级');
       setMagnitudeTone('selected-mag', null);
       text('selected-depth', '--');
@@ -1333,7 +1376,7 @@
     text('selected-source', event.sourceLabel || sourceLabel(event.source) || '中国地震台网');
     text('selected-status', level.label);
     setSeverityTone('selected-status', event);
-    text('selected-location', event.location || '未知震中');
+    renderMobileEventLocation(event, event.location || '未知震中');
     text('selected-mag', formatNumber(event.magnitude, ' 级', 1));
     setMagnitudeTone('selected-mag', event);
     text('selected-depth', formatNumber(event.depth, ' km', 0));
@@ -1816,8 +1859,8 @@
       return;
     }
     try {
-      await sendPushEventToCurrentDevice(event);
-      showMessage('本机通知测试', '服务器已向当前手机浏览器订阅发送所选地震信息，请查看系统通知。');
+      const result = await sendPushEventToCurrentDevice(event);
+      showMessage('本机通知测试', window.QuakePush.deliveryMessage(result));
     } catch (error) {
       showMessage('本机通知测试', mobilePushErrorMessage(error));
     }
@@ -1828,8 +1871,8 @@
       openDebugDialog();
       return;
     }
-    const city = faultCities[Math.floor(Math.random() * faultCities.length)];
-    const magnitude = Number((3.2 + Math.random() * 3.8).toFixed(1));
+    const city = faultCities[secureRandomInt(faultCities.length)];
+    const magnitude = 3.2 + secureRandomInt(39) / 10;
     const now = new Date().toISOString();
     const testEvent = {
       source: 'debug',
@@ -1837,7 +1880,7 @@
       eventId: `debug-${Date.now()}`,
       location: city.location,
       magnitude,
-      depth: Math.round(8 + Math.random() * 18),
+      depth: 8 + secureRandomInt(19),
       latitude: city.lat,
       longitude: city.lon,
       intensity: magnitude >= 5 ? 6 : magnitude >= 4 ? 4 : 3,
@@ -1857,6 +1900,19 @@
       showToast('测试地震已添加，设备推送失败');
       showMessage('测试地震推送', mobilePushErrorMessage(error));
     }
+  }
+
+  function secureRandomInt(maxExclusive) {
+    const upperBound = Math.floor(Number(maxExclusive));
+    if (!Number.isSafeInteger(upperBound) || upperBound <= 0 || upperBound > 0x100000000) return 0;
+    if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') return Math.floor(upperBound / 2);
+    const range = 0x100000000;
+    const limit = range - range % upperBound;
+    const values = new Uint32Array(1);
+    do {
+      window.crypto.getRandomValues(values);
+    } while (values[0] >= limit);
+    return values[0] % upperBound;
   }
 
   function showDebugCookieBar() {

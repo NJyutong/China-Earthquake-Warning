@@ -389,13 +389,17 @@ html[lang="en"] .brand h1 {
   right: 0;
   z-index: 80;
   width: min(360px, calc(100vw - 44px));
+  max-height: min(420px, 55dvh);
   padding: 12px;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   color: var(--text);
   background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+  overflow: hidden;
   opacity: 0;
   visibility: hidden;
   transform: translateY(-5px);
@@ -447,8 +451,13 @@ html[lang="en"] .brand h1 {
 .source-popover ul {
   display: grid;
   gap: 6px;
+  min-height: 0;
   margin: 10px 0 0;
   padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
   list-style: none;
 }
 
@@ -1176,6 +1185,19 @@ body[data-quake-state="error"] .alert-panel {
 .alert-title-place {
   min-width: 0;
   display: block;
+}
+
+.alert-title-place.is-taiwan-location {
+  display: grid;
+  gap: 3px;
+  line-height: 1.08;
+}
+
+.alert-title-line {
+  width: max-content;
+  max-width: none;
+  display: block;
+  white-space: nowrap;
 }
 
 .alert-title-unit {
@@ -2099,6 +2121,16 @@ html[lang="en"] .alert-title-magnitude {
     flex-wrap: wrap;
   }
 
+  .source-popover {
+    right: auto;
+    left: 0;
+  }
+
+  .source-popover::before {
+    right: auto;
+    left: 28px;
+  }
+
   .map-panel .panel-head {
     flex-wrap: nowrap;
   }
@@ -2228,16 +2260,6 @@ html[lang="en"] .alert-title-magnitude {
 
   .ops-filter-card {
     grid-template-columns: 1fr;
-  }
-
-  .source-popover {
-    right: auto;
-    left: 0;
-  }
-
-  .source-popover::before {
-    right: auto;
-    left: 28px;
   }
 
   .map-source-picker {

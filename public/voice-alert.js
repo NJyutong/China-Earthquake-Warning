@@ -7,8 +7,11 @@
   const MAX_SPOKEN_KEYS = 120;
   const spokenKeys = new Set();
   const spokenOrder = [];
+  const dedupeChannel = typeof window.BroadcastChannel === 'function' ? new window.BroadcastChannel('quake-voice-dedupe') : null;
   let enabled = false;
   let initialized = false;
+
+  if (dedupeChannel) dedupeChannel.addEventListener('message', event => rememberInMemory(String(event.data || '')));
 
   function supported() {
     return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
@@ -55,18 +58,26 @@
     ).slice(0, 512);
   }
 
-  function remember(key) {
-    if (!key || spokenKeys.has(key)) return false;
-    try {
-      const previous = JSON.parse(window.localStorage.getItem(SHARED_DEDUPE_KEY) || '{}');
-      if (previous.key === key && Date.now() - Number(previous.time || 0) < SHARED_DEDUPE_MS) return false;
-      window.localStorage.setItem(SHARED_DEDUPE_KEY, JSON.stringify({ key, time: Date.now() }));
-    } catch (_error) {
-      // In-memory deduplication remains available when local storage is blocked.
-    }
+  function rememberInMemory(key) {
+    if (!key || spokenKeys.has(key)) return;
     spokenKeys.add(key);
     spokenOrder.push(key);
     while (spokenOrder.length > MAX_SPOKEN_KEYS) spokenKeys.delete(spokenOrder.shift());
+  }
+
+  async function remember(key) {
+    if (!key || spokenKeys.has(key)) return false;
+    const storage = window.SecureStorage;
+    try {
+      if (storage && storage.ready) await storage.ready;
+      const previous = JSON.parse(storage ? await storage.getItem(SHARED_DEDUPE_KEY) || '{}' : '{}');
+      if (previous.key === key && Date.now() - Number(previous.time || 0) < SHARED_DEDUPE_MS) return false;
+      if (storage) await storage.setItem(SHARED_DEDUPE_KEY, JSON.stringify({ key, time: Date.now() }));
+    } catch (_error) {
+      // In-memory deduplication remains available when encrypted storage is blocked.
+    }
+    rememberInMemory(key);
+    if (dedupeChannel) dedupeChannel.postMessage(key);
     return true;
   }
 
@@ -102,11 +113,11 @@
     return `地震提醒。${place}发生${magnitude.toFixed(1)}级地震。${hasDepth ? `震源深度${Math.round(depth)}公里。` : ''}请注意安全并采取适当防护。`;
   }
 
-  function announce(event) {
+  async function announce(event) {
     const magnitude = Number(event && event.magnitude);
     const key = eventKey(event);
     if (!enabled || !supported() || !event || event.isLive !== true || event.isHistory || event.isDebug || event.source === 'debug') return false;
-    if (!Number.isFinite(magnitude) || !remember(key)) return false;
+    if (!Number.isFinite(magnitude) || !await remember(key)) return false;
     return speak(announcementText(event));
   }
 

@@ -57,6 +57,43 @@ async function assertMapOverlaySafety(page, label, expectDetailFallback) {
   return result;
 }
 
+async function assertSourcePopoverWithinViewport(page, label) {
+  const trigger = page.locator('.source-status-wrap');
+  await trigger.focus();
+  await page.waitForTimeout(200);
+  const result = await page.locator('.source-popover').evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const list = element.querySelector('ul');
+    const firstLabel = list && list.querySelector('li span');
+    const labelRect = firstLabel ? firstLabel.getBoundingClientRect() : null;
+    const style = getComputedStyle(element);
+    const listStyle = list ? getComputedStyle(list) : null;
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      viewportWidth: window.visualViewport ? window.visualViewport.width : window.innerWidth,
+      viewportHeight: window.visualViewport ? window.visualViewport.height : window.innerHeight,
+      visible: style.visibility === 'visible' && Number(style.opacity) > 0,
+      listOverflowY: listStyle ? listStyle.overflowY : '',
+      listScrollable: list ? list.scrollHeight > list.clientHeight + 1 : false,
+      labelVisible: Boolean(labelRect && labelRect.left >= rect.left && labelRect.right <= rect.right && labelRect.width > 80),
+      labelText: firstLabel ? firstLabel.textContent.trim() : ''
+    };
+  });
+  assert(result.visible, `${label}: 信源状态框未显示`);
+  assert(result.left >= 0 && result.right <= result.viewportWidth + 1, `${label}: 信源状态框横向超出视口`);
+  assert(result.top >= 0 && result.bottom <= result.viewportHeight + 1, `${label}: 信源状态框纵向超出视口`);
+  assert(result.width >= 320, `${label}: 信源状态框宽度异常`);
+  assert(result.listOverflowY === 'auto' && result.listScrollable, `${label}: 多信源列表未启用内部滚动`);
+  assert(result.labelVisible && result.labelText, `${label}: 信源名称被裁切`);
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.mouse.move(result.viewportWidth - 2, result.viewportHeight - 2);
+  return result;
+}
+
 async function assertPanelWithinViewport(page, label) {
   const panel = page.locator('#desktop-debug-floating-panel');
   await panel.waitFor({ state: 'visible' });
@@ -101,6 +138,33 @@ async function assertPanelWithinViewport(page, label) {
   return result;
 }
 
+async function assertObsWithinViewport(page) {
+  const result = await page.locator('.obs-shell').evaluate(shell => {
+    const alert = shell.querySelector('.obs-alert');
+    const clock = shell.querySelector('#current-time');
+    const lastDetail = alert && alert.querySelector('dl > div:last-child');
+    const rect = element => {
+      const value = element.getBoundingClientRect();
+      return { left: value.left, top: value.top, right: value.right, bottom: value.bottom };
+    };
+    return {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      shell: rect(shell),
+      alert: rect(alert),
+      clock: rect(clock),
+      lastDetail: rect(lastDetail),
+      alertClientHeight: alert.clientHeight,
+      alertScrollHeight: alert.scrollHeight
+    };
+  });
+  assert(result.shell.right <= result.viewportWidth + 1 && result.shell.bottom <= result.viewportHeight + 1, 'OBS 外框超出桌面视口');
+  assert(result.alert.right <= result.viewportWidth + 1 && result.clock.right <= result.viewportWidth + 1, 'OBS 右侧面板或时钟被横向裁切');
+  assert(result.lastDetail.bottom <= result.alert.bottom + 1, `OBS 右侧最后一行详情不可见: ${JSON.stringify(result)}`);
+  assert(result.alertScrollHeight <= result.alertClientHeight + 1, `OBS 右侧面板仍需要滚动才能完整显示: ${JSON.stringify(result)}`);
+  return result;
+}
+
 async function main() {
   assert(debugPassword, '缺少 UI_TEST_PASSWORD，无法验证调试面板');
   const executablePath = String(process.env.UI_TEST_BROWSER_PATH || '').trim();
@@ -126,9 +190,11 @@ async function main() {
       await guideSkip.click();
       await page.locator('.guide-overlay').waitFor({ state: 'detached' });
     }
+    const sourcePopover = await assertSourcePopoverWithinViewport(page, '920x500 sources');
     const mapMedium = await assertMapOverlaySafety(page, '920x500 map', false);
     const settingsButton = page.locator('#desktop-settings-open-compact:visible, #desktop-settings-open:visible').first();
     await settingsButton.click();
+    assert(await page.locator('#desktop-obs-toggle').count() === 0, '桌面设置仍包含 OBS 客户端开关');
     await page.locator('#desktop-debug-enable').click();
     await page.locator('#desktop-debug-password').fill(debugPassword);
     await page.locator('#desktop-debug-confirm').click();
@@ -195,7 +261,13 @@ async function main() {
     assert(mobilePushTestRequests === 0, '手机版不安全 HTTP 环境仍向服务端提交了推送请求');
     await mobilePage.close();
 
-    console.log(JSON.stringify({ ok: true, mapMedium, mapCompact, medium, compact, recovered, mobileNotifications: true }));
+    const obsPage = await browser.newPage({ viewport: { width: 2048, height: 935 } });
+    await obsPage.goto(`${baseUrl}/obs?theme=light`, { waitUntil: 'domcontentloaded' });
+    await obsPage.waitForTimeout(500);
+    const obs = await assertObsWithinViewport(obsPage);
+    await obsPage.close();
+
+    console.log(JSON.stringify({ ok: true, sourcePopover, mapMedium, mapCompact, medium, compact, recovered, obs, mobileNotifications: true }));
   } finally {
     await browser.close();
   }

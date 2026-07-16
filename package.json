@@ -1,23 +1,32 @@
 {
   "name": "china-earthquake-live-screen",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "中国地震数据直播大屏，基于 Express 与 WebSocket 中转第三方公开数据源。",
-  "license": "MIT",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check public/i18n.js && node --check public/app.js && node --check public/mobile.js && node --check public/official-map.js && node --check public/obs.js && node --check public/shared.js && node --check public/secure-storage.js && node --check public/voice-alert.js && node --check public/push-client.js && node --check public/push-sw.js && node --check public/sw.js && node --check cloudflare/push-relay-worker.mjs && node --check scripts/config-check.js && node --check scripts/merge-env.js && node --check scripts/env-merge-smoke.js && node --check scripts/feature-smoke.js && node --check scripts/live-release-check.js && node --check scripts/push-network-check.js && node --check scripts/push-relay-smoke.js && node --check scripts/security-smoke.js && node --check scripts/ui-viewport-smoke.js && node --check scripts/voice-smoke.js",
+    "check": "node --check server.js && node --check lib/taiwan-simplifier.js && node --check public/i18n.js && node --check public/app.js && node --check public/mobile.js && node --check public/official-map.js && node --check public/obs.js && node --check public/shared.js && node --check public/secure-storage.js && node --check public/voice-alert.js && node --check public/push-client.js && node --check public/push-sw.js && node --check public/push-worker-runtime.js && node --check public/sw.js && node --check cloudflare/push-relay-worker.mjs && node --check scripts/config-check.js && node --check scripts/config-check-smoke.js && node --check scripts/deploy-safety-smoke.js && node --check scripts/merge-env.js && node --check scripts/env-merge-smoke.js && node --check scripts/feature-smoke.js && node --check scripts/live-release-check.js && node --check scripts/obs-disabled-smoke.js && node --check scripts/package-release.js && node --check scripts/push-network-check.js && node --check scripts/push-relay-smoke.js && node --check scripts/push-worker-smoke.js && node --check scripts/security-smoke.js && node --check scripts/sync-version.js && node --check scripts/ui-viewport-smoke.js && node --check scripts/version.js && node --check scripts/voice-smoke.js && node --check scripts/with-server.js",
+    "sync-version": "node scripts/sync-version.js",
+    "version": "npm run sync-version",
     "config-check": "node scripts/config-check.js",
+    "config-check-smoke": "node scripts/config-check-smoke.js",
     "feature-check": "node scripts/feature-smoke.js",
     "push-network-check": "node scripts/push-network-check.js",
-    "security-check": "node scripts/env-merge-smoke.js && node scripts/feature-smoke.js && node scripts/voice-smoke.js && node scripts/push-relay-smoke.js && node scripts/security-smoke.js",
-    "package": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1"
+    "security-check": "node scripts/config-check-smoke.js && node scripts/deploy-safety-smoke.js && node scripts/env-merge-smoke.js && node scripts/feature-smoke.js && node scripts/voice-smoke.js && node scripts/push-relay-smoke.js && node scripts/push-worker-smoke.js && node scripts/with-server.js scripts/security-smoke.js && node scripts/with-server.js scripts/obs-disabled-smoke.js --obs-disabled",
+    "ui-check": "node scripts/with-server.js scripts/ui-viewport-smoke.js",
+    "package": "node scripts/package-release.js"
   },
   "dependencies": {
     "express": "^4.19.2",
+    "express-rate-limit": "^8.5.2",
     "ol": "^10.9.0",
+    "opencc-js": "1.4.1",
     "pinyin-pro": "3.18.2",
     "web-push": "^3.6.7",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "archiver": "^8.0.0",
+    "playwright": "^1.61.1"
   }
 }

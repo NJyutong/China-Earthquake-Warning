@@ -442,6 +442,21 @@ body[data-quake-state="error"] .hero-alert {
   text-wrap: balance;
 }
 
+.hero-alert h1.is-taiwan-location {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: normal;
+  line-height: 1.08;
+  text-wrap: wrap;
+}
+
+.mobile-location-line {
+  width: max-content;
+  max-width: none;
+  display: block;
+  white-space: nowrap;
+}
+
 .hero-grid,
 .wave-card,
 .quick-detail {

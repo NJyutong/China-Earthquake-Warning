@@ -1,21 +1,28 @@
-const CACHE_NAME = 'quake-mobile-v22';
+importScripts('/push-worker-runtime.js?v=r1.1');
+
+const CACHE_NAME = 'quake-mobile-r1.1';
 const CORE_ASSETS = [
-  '/mobile.css?v=r1',
-  '/mobile.js?v=r1',
+  '/mobile.css?v=r1.1',
+  '/mobile.js?v=r1.1',
   '/vendor/pinyin-pro/index.js?v=3.18.2',
-  '/i18n.js?v=r1',
-  '/shared.js?v=r1',
-  '/secure-storage.js?v=r1',
-  '/voice-alert.js?v=r1',
-  '/push-client.js?v=r1',
+  '/i18n.js?v=r1.1',
+  '/shared.js?v=r1.1',
+  '/secure-storage.js?v=r1.1',
+  '/voice-alert.js?v=r1.1',
+  '/push-client.js?v=r1.1',
+  '/push-worker-runtime.js?v=r1.1',
   '/china-admin.js',
-  '/official-map.js?v=r1',
+  '/official-map.js?v=r1.1',
   '/app-icon.png',
   '/manifest.webmanifest'
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => Promise.allSettled(CORE_ASSETS.map(asset => cache.add(asset))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', event => {

@@ -19,6 +19,7 @@
     wavePixelSize,
     formatTime,
     formatTimeWithZone,
+    taiwanLocationLayout,
     liveChannelStatus,
   } = window.EarthquakeShared;
 
@@ -60,7 +61,6 @@
     desktopNotificationsEnabled: false,
     webPushEnabled: false,
     notificationArea: { country: 'CN_MAINLAND', region: 'all', province: 'all', city: 'all', district: 'all' },
-    obsEnabled: false,
     selectedEventKey: '',
     historyError: '',
     dataStatus: 'connecting',
@@ -89,12 +89,10 @@
     'latest-received': 'desktop-detail-received',
     'latest-source-detail': 'desktop-detail-source',
     'latest-event-id': 'desktop-detail-id',
-    'obs-status': 'desktop-obs-status',
     'settings-open': 'desktop-settings-open',
     'settings-close': 'desktop-settings-close',
     'settings-backdrop': 'desktop-settings-backdrop',
     'control-panel': 'desktop-settings-drawer',
-    'obs-toggle': 'desktop-obs-toggle',
     'notification-toggle': 'desktop-notification-toggle',
     'notification-status': 'desktop-notification-status',
     'notification-settings-panel': 'desktop-notification-settings-panel',
@@ -272,7 +270,6 @@
     const storedMap = await secureGet('quakeMapSource', state.mapSourceKey);
     if (!params.get('map')) state.mapSourceKey = MAP_SOURCES.some(source => source.key === storedMap) ? storedMap : 'amap';
     state.notificationThreshold = clampNotificationThreshold(await requiredGet('quakeNotificationThreshold', await secureGet('quakeIntensityThreshold', '3')));
-    state.obsEnabled = (await secureGet('quakeObsEnabled', 'false')) === 'true';
     state.mapToken = params.get('tk') || params.get('tiandituToken') || await secureGet('tiandituToken', '');
     state.desktopNotificationsEnabled = (await requiredGet('quakeDesktopNotifications', 'false')) === 'true';
     state.notificationArea = readNotificationArea(await requiredGet('quakeNotificationArea', '{}'));
@@ -348,24 +345,40 @@
     return result.length ? result : [String(value || '--')];
   }
 
-  function renderAlertTitle(location, magnitude) {
+  function renderAlertTitle(event, location, magnitude) {
     const node = $('latest-location');
     if (!node) return;
     const english = Boolean(window.QuakeI18n && window.QuakeI18n.isEnglish);
+    const taiwanLayout = taiwanLocationLayout(location, event);
+    const translatedLocation = english && window.QuakeI18n ? window.QuakeI18n.t(location) : location;
     const rawUnits = splitChineseAdministrativeUnits(location);
     const units = english && window.QuakeI18n ? rawUnits.map(unit => window.QuakeI18n.t(unit)) : rawUnits;
-    const place = units.join(english ? ', ' : '');
+    const place = taiwanLayout ? translatedLocation : units.join(english ? ', ' : '');
     const magnitudeValue = Number.isFinite(Number(magnitude)) ? Number(magnitude).toFixed(1) : '--';
     const placeNode = document.createElement('span');
     placeNode.className = 'alert-title-place';
-    units.forEach((unit, index) => {
-      const unitNode = document.createElement('span');
-      unitNode.className = 'alert-title-unit';
-      if (english && index < units.length - 1) unitNode.classList.add('has-separator');
-      unitNode.textContent = english && index < units.length - 1 ? `${unit},` : unit;
-      placeNode.appendChild(unitNode);
-      if (index < units.length - 1) placeNode.appendChild(document.createElement('wbr'));
-    });
+    if (taiwanLayout) {
+      placeNode.classList.add('is-taiwan-location');
+      const englishParts = String(translatedLocation).match(/^(.*?)\s*(\([^()]+\))$/);
+      const lines = english
+        ? englishParts ? [englishParts[1].trim(), englishParts[2]] : [translatedLocation]
+        : taiwanLayout.lines;
+      lines.filter(Boolean).forEach(line => {
+        const lineNode = document.createElement('span');
+        lineNode.className = 'alert-title-line';
+        lineNode.textContent = line;
+        placeNode.appendChild(lineNode);
+      });
+    } else {
+      units.forEach((unit, index) => {
+        const unitNode = document.createElement('span');
+        unitNode.className = 'alert-title-unit';
+        if (english && index < units.length - 1) unitNode.classList.add('has-separator');
+        unitNode.textContent = english && index < units.length - 1 ? `${unit},` : unit;
+        placeNode.appendChild(unitNode);
+        if (index < units.length - 1) placeNode.appendChild(document.createElement('wbr'));
+      });
+    }
     const magnitudeNode = document.createElement('span');
     magnitudeNode.className = 'alert-title-magnitude';
     magnitudeNode.textContent = english ? `M${magnitudeValue} earthquake` : `${magnitudeValue} 级地震`;
@@ -380,13 +393,24 @@
     const title = $('latest-location');
     const availableWidth = title ? title.clientWidth : 0;
     if (title && availableWidth) {
-      title.querySelectorAll('.alert-title-unit').forEach(unit => {
-        unit.style.fontSize = '';
+      const taiwanPlace = title.querySelector('.alert-title-place.is-taiwan-location');
+      if (taiwanPlace) {
+        taiwanPlace.style.fontSize = '';
         const baseSize = Number.parseFloat(window.getComputedStyle(title).fontSize) || 24;
-        if (unit.scrollWidth > availableWidth) {
-          unit.style.fontSize = `${Math.max(12, Math.floor(baseSize * availableWidth / unit.scrollWidth))}px`;
+        const widestLine = Array.from(taiwanPlace.querySelectorAll('.alert-title-line'))
+          .reduce((width, line) => Math.max(width, line.scrollWidth), 0);
+        if (widestLine > availableWidth) {
+          taiwanPlace.style.fontSize = `${Math.max(18, Math.floor(baseSize * availableWidth / widestLine))}px`;
         }
-      });
+      } else {
+        title.querySelectorAll('.alert-title-unit').forEach(unit => {
+          unit.style.fontSize = '';
+          const baseSize = Number.parseFloat(window.getComputedStyle(title).fontSize) || 24;
+          if (unit.scrollWidth > availableWidth) {
+            unit.style.fontSize = `${Math.max(12, Math.floor(baseSize * availableWidth / unit.scrollWidth))}px`;
+          }
+        });
+      }
     }
     document.querySelectorAll('.alert-panel .detail-grid dd').forEach(detail => {
       detail.style.fontSize = '';
@@ -1163,7 +1187,7 @@
     const magnitudeText = formatNumber(event.magnitude, ' 级', 1);
     updatePageEventState(event, waves);
     setText('latest-source', event.sourceLabel || event.source);
-    renderAlertTitle(location, event.magnitude);
+    renderAlertTitle(event, location, event.magnitude);
     setText('latest-magnitude', magnitudeText);
     setMagnitudeTone('latest-magnitude', event.magnitude);
     setText('summary-location', location);
@@ -1306,7 +1330,11 @@
     const list = $('event-list');
     if (!list) return;
     if (state.dataStatus === 'connecting') {
-      list.innerHTML = '<article class="empty-state is-connecting" role="status">正在连接服务器中</article>';
+      const empty = document.createElement('article');
+      empty.className = 'empty-state is-connecting';
+      empty.setAttribute('role', 'status');
+      empty.textContent = '正在连接服务器中';
+      list.replaceChildren(empty);
       return;
     }
     const oldPositions = captureListPositions(list, '.event', 'eventKey');
@@ -1314,25 +1342,36 @@
     const events = selectedAreaEvents();
     if (!events.length) {
       const message = state.historyError || '当前国家/地区暂无历史地震，正在等待数据源返回。';
-      list.innerHTML = `<article class="empty-state">${escapeHtml(message)}</article>`;
+      const empty = document.createElement('article');
+      empty.className = 'empty-state';
+      empty.textContent = message;
+      list.replaceChildren(empty);
       list.dataset.ready = 'true';
       return;
     }
-    list.innerHTML = events.map(event => {
+    const fragment = document.createDocumentFragment();
+    events.forEach(event => {
       const strength = magnitudeIntensity(event.magnitude);
       const key = event.eventKey || getEventKey(event);
       const selected = key === state.selectedEventKey;
       const isNew = listReady && !oldPositions.has(key);
-      return `
-      <button class="event ${magnitudeBand(event.magnitude)}${selected ? ' active' : ''}${isNew ? ' is-new' : ''}" type="button" data-event-key="${escapeAttr(key)}" aria-label="${escapeAttr(`${displayLocation(event)}，${formatNumber(event.magnitude, '级', 1)}，${formatTime(event.originTime || event.receivedAt)}，${event.isLive ? '实时' : '历史'}地震`)}">
-        <strong>${formatNumber(event.magnitude, '', 1)}</strong>
-        <div>
-          <b>${escapeHtml(displayLocation(event))}</b>
-          <span>${formatTime(event.originTime || event.receivedAt)} · ${event.isLive ? '实时' : '历史'} · ${escapeHtml(strength.label)}</span>
-        </div>
-      </button>
-    `;
-    }).join('');
+      const button = document.createElement('button');
+      button.className = `event ${magnitudeBand(event.magnitude)}${selected ? ' active' : ''}${isNew ? ' is-new' : ''}`;
+      button.type = 'button';
+      button.dataset.eventKey = key;
+      button.setAttribute('aria-label', `${displayLocation(event)}，${formatNumber(event.magnitude, '级', 1)}，${formatTime(event.originTime || event.receivedAt)}，${event.isLive ? '实时' : '历史'}地震`);
+      const magnitude = document.createElement('strong');
+      magnitude.textContent = formatNumber(event.magnitude, '', 1);
+      const detail = document.createElement('div');
+      const location = document.createElement('b');
+      location.textContent = displayLocation(event);
+      const meta = document.createElement('span');
+      meta.textContent = `${formatTime(event.originTime || event.receivedAt)} · ${event.isLive ? '实时' : '历史'} · ${strength.label}`;
+      detail.append(location, meta);
+      button.append(magnitude, detail);
+      fragment.appendChild(button);
+    });
+    list.replaceChildren(fragment);
     list.dataset.ready = 'true';
     animateListMoves(list, '.event', 'eventKey', oldPositions);
   }
@@ -1654,7 +1693,6 @@
     const countrySelect = $('country-select');
     const regionSelect = $('region-select');
     const thresholdInput = $('intensity-threshold');
-    const obsToggle = $('obs-toggle');
     const notificationToggle = $('notification-toggle');
     const voiceToggle = $('voice-toggle');
     const debugEnable = $('debug-enable');
@@ -1723,15 +1761,6 @@
             else updateNotificationStatus('推送条件待同步，将在网络恢复后自动重试');
           });
         }
-      });
-    }
-    if (obsToggle) {
-      obsToggle.checked = state.obsEnabled;
-      setText('obs-status', obsToggle.checked ? 'OBS 输出已开启' : 'OBS 默认关闭');
-      obsToggle.addEventListener('change', () => {
-        state.obsEnabled = obsToggle.checked;
-        secureSet('quakeObsEnabled', String(obsToggle.checked));
-        setText('obs-status', obsToggle.checked ? 'OBS 输出已开启' : 'OBS 默认关闭');
       });
     }
     initNotificationControls(notificationToggle);
@@ -2371,7 +2400,7 @@
 
   async function unsubscribePushSubscription() {
     try {
-      if (window.QuakePush) await window.QuakePush.unsubscribe();
+      if (window.QuakePush) await window.QuakePush.unsubscribe(pushSubscriptionOptions());
     } catch (_error) {
       // 用户关闭推送时静默兜底，状态仍按关闭处理。
     }
@@ -2393,8 +2422,8 @@
       return;
     }
     try {
-      await sendPushEventToCurrentDevice(event);
-      showMessage('本机通知测试', '服务器已向当前浏览器订阅发送所选地震信息，请查看系统通知。');
+      const result = await sendPushEventToCurrentDevice(event);
+      showMessage('本机通知测试', window.QuakePush.deliveryMessage(result));
     } catch (error) {
       showMessage('本机通知测试', pushSetupErrorMessage(error));
     }
@@ -2403,8 +2432,8 @@
   async function testDesktopBackgroundPush() {
     if (!debugEnabled) return;
     try {
-      await sendPushEventToCurrentDevice(testNotificationEvent());
-      showMessage('后台推送测试', '服务器已完成后台推送测试，请查看电脑系统通知。');
+      const result = await sendPushEventToCurrentDevice(testNotificationEvent());
+      showMessage('后台推送测试', window.QuakePush.deliveryMessage(result));
     } catch (error) {
       showMessage('后台推送测试', pushSetupErrorMessage(error));
     }
@@ -2744,14 +2773,14 @@
     }
     const now = new Date();
     const epicenter = debugFaultLocation();
-    const magnitude = Number((3.2 + Math.random() * 3.8).toFixed(1));
+    const magnitude = 3.2 + secureRandomInt(39) / 10;
     const testEvent = {
       source: 'debug_local',
       sourceLabel: '本地调试',
       eventId: `debug-${now.getTime()}`,
       location: epicenter.location,
       magnitude,
-      depth: Math.round(6 + Math.random() * 18),
+      depth: 6 + secureRandomInt(19),
       latitude: epicenter.latitude,
       longitude: epicenter.longitude,
       intensity: magnitude >= 5 ? 6 : magnitude >= 4 ? 4 : 3,
@@ -2774,12 +2803,29 @@
   }
 
   function debugFaultLocation() {
-    const base = FAULT_BELT_LOCATIONS[Math.floor(Math.random() * FAULT_BELT_LOCATIONS.length)];
+    const base = FAULT_BELT_LOCATIONS[secureRandomInt(FAULT_BELT_LOCATIONS.length)];
     return {
       location: base.location,
-      latitude: base.lat + (Math.random() - 0.5) * 0.18,
-      longitude: base.lon + (Math.random() - 0.5) * 0.18
+      latitude: base.lat + secureRandomCoordinateOffset(),
+      longitude: base.lon + secureRandomCoordinateOffset()
     };
+  }
+
+  function secureRandomCoordinateOffset() {
+    return (secureRandomInt(18001) - 9000) / 100000;
+  }
+
+  function secureRandomInt(maxExclusive) {
+    const upperBound = Math.floor(Number(maxExclusive));
+    if (!Number.isSafeInteger(upperBound) || upperBound <= 0 || upperBound > 0x100000000) return 0;
+    if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') return Math.floor(upperBound / 2);
+    const range = 0x100000000;
+    const limit = range - range % upperBound;
+    const values = new Uint32Array(1);
+    do {
+      window.crypto.getRandomValues(values);
+    } while (values[0] >= limit);
+    return values[0] % upperBound;
   }
 
   function showMessage(title, text) {
@@ -2816,7 +2862,7 @@
       { target: '.map-panel', title: '震中地图', text: '显示震中位置和地震波范围。' },
       { target: '.alert-panel', title: '地震详情', text: '显示震级、预计到达、烈度、发震时间和接收时间。' },
       { target: '.events-panel', title: '历史地震', text: '显示按时间排序的历史和实时事件。' },
-      { target: settingsTarget, title: '设置', text: '打开地图源、区域筛选、系统推送、OBS 和调试设置。' }
+      { target: settingsTarget, title: '设置', text: '打开地图源、区域筛选、系统推送和调试设置。' }
     ];
   }
 
